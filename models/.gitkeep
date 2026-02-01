@@ -1,0 +1,5 @@
+# This folder contains trained Keras models
+# Download or train the handwriting model and place it here
+
+# Expected model files:
+# - handwriting_model.keras (CRNN model for handwritten text)
