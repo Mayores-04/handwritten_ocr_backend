@@ -1,7 +1,9 @@
 FROM python:3.11-slim
 
-# Prevent Python buffering issues
+# Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8000
 
 # Disable GPU usage (Render has no GPU)
 ENV CUDA_VISIBLE_DEVICES=""
@@ -9,27 +11,38 @@ ENV TF_CPP_MIN_LOG_LEVEL=2
 
 # Install system dependencies for OpenCV & OCR
 RUN apt-get update && apt-get install -y \
-    libgl1 \
+    libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    libgomp1 \
     ffmpeg \
     tesseract-ocr \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python deps first (better caching)
+# Install Python dependencies first (better caching)
 COPY requirements.txt .
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy app source
+# Copy application code
 COPY . .
 
-# Expose port
-EXPOSE 8000
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app
+USER app
 
-# Start with Gunicorn using config file
-CMD ["gunicorn", "--config", "gunicorn.conf.py", "app:app"]
+# Expose port
+EXPOSE $PORT
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:$PORT/api/health || exit 1
+
+# Start the application
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --preload app:app

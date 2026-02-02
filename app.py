@@ -7,19 +7,48 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 from PIL import Image
+import logging
 
-from ocr_engine import OCREngine
-from utils import decode_base64_image
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+try:
+    from ocr_engine import OCREngine
+    from utils import decode_base64_image
+    logger.info("OCR modules loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to import OCR modules: {e}")
+    OCREngine = None
+    decode_base64_image = None
 
 app = Flask(__name__)
-CORS(app, origins=[
-    "https://handwritten-ocr-gold.vercel.app",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-], supports_credentials=True)
 
-# Initialize OCR Engine (lazy loading)
-ocr_engine = OCREngine()
+# Configure CORS with explicit origins
+CORS(app, 
+     origins=[
+         "https://handwritten-ocr-gold.vercel.app",
+         "http://localhost:3000",
+         "http://127.0.0.1:3000"
+     ], 
+     supports_credentials=True,
+     methods=['GET', 'POST', 'OPTIONS'],
+     allow_headers=['Content-Type', 'Authorization'])
+
+# Initialize OCR Engine (lazy loading with error handling)
+ocr_engine = None
+
+def get_ocr_engine():
+    """Get OCR engine with lazy initialization"""
+    global ocr_engine
+    if ocr_engine is None and OCREngine is not None:
+        try:
+            ocr_engine = OCREngine()
+            logger.info("OCR Engine initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OCR Engine: {e}")
+            ocr_engine = None
+    return ocr_engine
 
 
 # ============ Helper Functions ============
@@ -78,16 +107,38 @@ def root():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'message': 'OCR API is running'
-    })
+    try:
+        engine = get_ocr_engine()
+        ocr_status = "ready" if engine else "not_available"
+        
+        return jsonify({
+            'status': 'healthy',
+            'message': 'OCR API is running',
+            'ocr_engine': ocr_status,
+            'port': os.environ.get('PORT', '8000')
+        })
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 
-@app.route('/api/ocr', methods=['POST'])
+@app.route('/api/ocr', methods=['POST', 'OPTIONS'])
 def extract_text():
     """Extract text from uploaded image (printed or handwritten)"""
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     try:
+        # Check if OCR engine is available
+        engine = get_ocr_engine()
+        if not engine:
+            return jsonify({
+                'success': False,
+                'error': 'OCR engine not available'
+            }), 503
         image = get_image_from_request()
         if not image:
             return jsonify({
@@ -96,11 +147,12 @@ def extract_text():
             }), 400
         
         mode = get_mode_from_request()
-        result = ocr_engine.recognize_text(image, mode=mode)
+        result = engine.recognize_text(image, mode=mode)
         
         return jsonify(format_ocr_response(result))
     
     except Exception as e:
+        logger.error(f"OCR processing failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
