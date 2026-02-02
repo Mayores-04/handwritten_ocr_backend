@@ -3,7 +3,6 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8000
 
 # Disable GPU usage (Render has no GPU)
 ENV CUDA_VISIBLE_DEVICES=""
@@ -34,17 +33,8 @@ RUN pip install --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app
-USER app
+# Expose port (Render provides PORT env var)
+EXPOSE 8000
 
-# Expose port
-EXPOSE $PORT
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:$PORT/api/health || exit 1
-
-# Start the application
-CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --preload app:app
+# Start the application - use shell form for $PORT expansion
+CMD exec gunicorn --bind "0.0.0.0:${PORT:-8000}" --workers 1 --timeout 300 --preload app:app
