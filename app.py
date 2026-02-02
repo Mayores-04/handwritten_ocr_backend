@@ -3,9 +3,10 @@ Image to Text OCR Backend using Keras
 Supports both printed and handwritten text recognition
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import os
+from typing import Any, Optional, Union
 from PIL import Image
 import logging
 
@@ -53,30 +54,31 @@ def get_ocr_engine():
 
 # ============ Helper Functions ============
 
-def get_image_from_request():
+def get_image_from_request() -> Optional[Image.Image]:
     """Extract image from request (file or base64)"""
-    json_data = request.get_json(silent=True) or {}
+    json_data: dict[str, Any] = request.get_json(silent=True) or {}
     
     if 'image' in request.files:
         return Image.open(request.files['image'].stream)
     
-    if 'image_base64' in json_data:
-        return decode_base64_image(json_data['image_base64'])
+    if 'image_base64' in json_data and decode_base64_image is not None:
+        return decode_base64_image(str(json_data['image_base64']))
     
     return None
 
 
-def get_mode_from_request(default='auto'):
+def get_mode_from_request(default: str = 'auto') -> str:
     """Extract OCR mode from request"""
-    json_data = request.get_json(silent=True) or {}
-    return json_data.get('mode', request.form.get('mode', default))
+    json_data: dict[str, Any] = request.get_json(silent=True) or {}
+    mode = json_data.get('mode', request.form.get('mode', default))
+    return str(mode) if mode else default
 
 
-def format_ocr_response(result):
+def format_ocr_response(result: dict[str, Any]) -> dict[str, Any]:
     """Format OCR result for API response"""
-    lines = result.get('lines', [])
+    lines: list[str] = result.get('lines', [])
     if not lines and result.get('text'):
-        lines = result['text'].split('\n')
+        lines = str(result['text']).split('\n')
     
     return {
         'success': True,
@@ -157,14 +159,18 @@ def extract_text():
 
 
 @app.route('/api/ocr/handwritten', methods=['POST'])
-def extract_handwritten():
+def extract_handwritten() -> Union[Response, tuple[Response, int]]:
     """Specialized endpoint for handwritten text recognition"""
     try:
+        engine = get_ocr_engine()
+        if not engine:
+            return jsonify({'success': False, 'error': 'OCR engine not available'}), 503
+        
         image = get_image_from_request()
         if not image:
             return jsonify({'success': False, 'error': 'No image provided'}), 400
         
-        result = ocr_engine.recognize_handwritten(image)
+        result: dict[str, Any] = engine.recognize_handwritten(image)
         response = format_ocr_response(result)
         response['characters'] = result.get('characters', [])
         
@@ -175,17 +181,21 @@ def extract_handwritten():
 
 
 @app.route('/api/ocr/batch', methods=['POST'])
-def batch_extract():
+def batch_extract() -> Union[Response, tuple[Response, int]]:
     """Process multiple images in batch"""
     try:
+        engine = get_ocr_engine()
+        if not engine:
+            return jsonify({'success': False, 'error': 'OCR engine not available'}), 503
+        
         files = request.files.getlist('images')
         if not files:
             return jsonify({'success': False, 'error': 'No images provided'}), 400
         
-        results = []
+        results: list[dict[str, Any]] = []
         for file in files:
             image = Image.open(file.stream)
-            result = ocr_engine.recognize_text(image, mode='auto')
+            result: dict[str, Any] = engine.recognize_text(image, mode='auto')
             results.append({
                 'filename': file.filename,
                 'text': result['text'],

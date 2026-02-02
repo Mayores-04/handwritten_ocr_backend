@@ -1,9 +1,10 @@
 """
 Configuration constants for OCR Engine
 """
+from typing import Any
 
 # EasyOCR Settings
-EASYOCR_CONFIG = {
+EASYOCR_CONFIG: dict[str, Any] = {
     'languages': ['en'],
     'gpu': False,
     'batch_size': 4,
@@ -14,7 +15,7 @@ EASYOCR_CONFIG = {
 }
 
 # Handwriting EasyOCR Settings (more sensitive)
-HANDWRITING_EASYOCR_CONFIG = {
+HANDWRITING_EASYOCR_CONFIG: dict[str, Any] = {
     'paragraph': False,
     'min_size': 5,
     'text_threshold': 0.4,
@@ -28,7 +29,7 @@ HANDWRITING_EASYOCR_CONFIG = {
 }
 
 # Image Processing Settings
-IMAGE_CONFIG = {
+IMAGE_CONFIG: dict[str, Any] = {
     'max_width': 2000,
     'upscale_factor': 2.5,
     'upscale_threshold': 1500,

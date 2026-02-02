@@ -1,0 +1,17 @@
+{
+  "include": ["."],
+  "exclude": ["__pycache__", ".venv", "data", "Img", "models"],
+  "typeCheckingMode": "off",
+  "reportMissingTypeStubs": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownArgumentType": false,
+  "reportMissingParameterType": false,
+  "reportOptionalCall": false,
+  "reportOptionalMemberAccess": false,
+  "reportUnknownLambdaType": false,
+  "reportGeneralTypeIssues": false,
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Windows"
+}

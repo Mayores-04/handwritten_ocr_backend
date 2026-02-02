@@ -1,15 +1,14 @@
 services:
   - type: web
+    runtime: docker
     name: handwritten-ocr-backend
-    env: python
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --preload app:app
+    dockerfilePath: ./Dockerfile
     plan: free
     healthCheckPath: /api/health
     envVars:
       - key: PYTHONUNBUFFERED
-        value: 1
+        value: "1"
       - key: TF_CPP_MIN_LOG_LEVEL
-        value: 2
+        value: "2"
       - key: CUDA_VISIBLE_DEVICES
         value: ""

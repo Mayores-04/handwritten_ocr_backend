@@ -242,6 +242,6 @@ def post_process_handwriting(text: str) -> str:
     return result.strip()
 
 
-def process_lines(lines: list) -> list:
+def process_lines(lines: list[str]) -> list[str]:
     """Apply post-processing to a list of lines"""
     return [post_process_handwriting(line) for line in lines]

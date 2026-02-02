@@ -6,6 +6,7 @@ Supports both printed text and handwritten text
 import numpy as np
 from PIL import Image
 import cv2
+from typing import Any, Union
 
 from config import EASYOCR_CONFIG, HANDWRITING_EASYOCR_CONFIG, CHAR_CLASSES
 from models import model_loader
@@ -16,11 +17,14 @@ from preprocessing import (
 )
 from postprocessing import post_process_handwriting, process_lines
 
+# Type alias for image input
+ImageInput = Union[Image.Image, np.ndarray[Any, Any]]
+
 
 class OCREngine:
     """Main OCR Engine class"""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.char_classes = CHAR_CLASSES
         self.char_list = list('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ')
     
@@ -33,10 +37,10 @@ class OCREngine:
         return model_loader.load_char_model()
     
     @property
-    def handwriting_model(self):
+    def handwriting_model(self) -> Any:
         return model_loader.load_handwriting_model()
     
-    def recognize_text(self, image, mode='auto'):
+    def recognize_text(self, image: ImageInput, mode: str = 'auto') -> dict[str, Any]:
         """
         Main OCR function
         
@@ -57,7 +61,7 @@ class OCREngine:
         
         return self._error_response('No OCR engine available. Please install easyocr.')
     
-    def _run_handwriting_ocr(self, image):
+    def _run_handwriting_ocr(self, image: ImageInput) -> dict[str, Any]:
         """Direct handwriting OCR - single method, fast"""
         if not self.easyocr_reader:
             return self._error_response('No OCR engine available')
@@ -75,13 +79,13 @@ class OCREngine:
         
         return result
     
-    def recognize_handwritten(self, image):
+    def recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
         """Alias for handwriting OCR (backward compatibility)"""
         return self._run_handwriting_ocr(image)
     
     # ============ Printed Text Recognition ============
     
-    def _recognize_printed(self, image):
+    def _recognize_printed(self, image: ImageInput) -> dict[str, Any]:
         """Use EasyOCR for printed text recognition with layout preservation"""
         try:
             img_array = preprocess_image(image)
@@ -124,7 +128,7 @@ class OCREngine:
         except Exception as e:
             return self._error_response(str(e))
     
-    def _parse_easyocr_results(self, results):
+    def _parse_easyocr_results(self, results: list[Any]) -> tuple[list[dict[str, Any]], list[float]]:
         """Parse EasyOCR results into word boxes"""
         word_boxes = []
         confidences = []
@@ -141,7 +145,7 @@ class OCREngine:
         
         return word_boxes, confidences
     
-    def _group_into_lines(self, word_boxes):
+    def _group_into_lines(self, word_boxes: list[dict[str, Any]]) -> list[str]:
         """Group word boxes into lines based on Y position"""
         if not word_boxes:
             return []
@@ -175,7 +179,7 @@ class OCREngine:
     
     # ============ Handwriting Recognition ============
     
-    def _easyocr_handwriting(self, img_array):
+    def _easyocr_handwriting(self, img_array: Any) -> dict[str, Any]:
         """Run EasyOCR with handwriting-optimized parameters"""
         try:
             results = self.easyocr_reader.readtext(
@@ -208,7 +212,7 @@ class OCREngine:
         except Exception as e:
             return self._error_response(str(e))
     
-    def _parse_handwriting_results(self, results):
+    def _parse_handwriting_results(self, results: list[Any]) -> tuple[list[dict[str, Any]], list[float]]:
         """Parse EasyOCR results for handwriting"""
         word_boxes = []
         confidences = []
@@ -228,7 +232,7 @@ class OCREngine:
         
         return word_boxes, confidences
     
-    def _group_handwriting_lines(self, word_boxes):
+    def _group_handwriting_lines(self, word_boxes: list[dict[str, Any]]) -> list[str]:
         """Group handwriting words into lines with overlap detection"""
         if not word_boxes:
             return []
@@ -271,7 +275,7 @@ class OCREngine:
     
     # ============ TrOCR Recognition ============
     
-    def _trocr_recognize(self, image):
+    def _trocr_recognize(self, image: ImageInput) -> dict[str, Any]:
         """Use TrOCR for handwriting recognition"""
         try:
             pil_image = self._to_pil(image)
@@ -302,7 +306,7 @@ class OCREngine:
         except Exception as e:
             return self._handwriting_fallback(image)
     
-    def _detect_text_lines(self, pil_image):
+    def _detect_text_lines(self, pil_image: Image.Image) -> list[Image.Image]:
         """Detect text lines using horizontal projection"""
         img_array = np.array(pil_image.convert('L'))
         _, binary = cv2.threshold(img_array, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -332,7 +336,7 @@ class OCREngine:
     
     # ============ Keras Model Recognition ============
     
-    def _keras_handwriting_recognize(self, image):
+    def _keras_handwriting_recognize(self, image: ImageInput) -> dict[str, Any]:
         """Use custom Keras model for handwriting"""
         img_array = self._preprocess_for_keras(image)
         predictions = self.handwriting_model.predict(img_array)
@@ -344,7 +348,7 @@ class OCREngine:
             'mode': 'keras_handwriting'
         }
     
-    def _preprocess_for_keras(self, image):
+    def _preprocess_for_keras(self, image: ImageInput) -> np.ndarray[Any, Any]:
         """Preprocess image for Keras handwriting model"""
         if isinstance(image, Image.Image):
             gray = np.array(image.convert('L'))
@@ -364,7 +368,7 @@ class OCREngine:
         
         return np.expand_dims(np.expand_dims(gray, axis=-1), axis=0)
     
-    def _ctc_decode(self, predictions):
+    def _ctc_decode(self, predictions: Any) -> str:
         """CTC decoding for Keras model output"""
         decoded = []
         prev_char = None
@@ -380,13 +384,13 @@ class OCREngine:
     
     # ============ Utility Methods ============
     
-    def _to_pil(self, image):
+    def _to_pil(self, image: ImageInput) -> Image.Image:
         """Convert image to PIL Image"""
         if isinstance(image, Image.Image):
             return image.convert('RGB')
         return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     
-    def _empty_response(self, mode):
+    def _empty_response(self, mode: str) -> dict[str, Any]:
         return {
             'text': '',
             'confidence': 0,
@@ -396,7 +400,7 @@ class OCREngine:
             'line_count': 0
         }
     
-    def _error_response(self, error):
+    def _error_response(self, error: str) -> dict[str, Any]:
         return {
             'text': '',
             'confidence': 0,
