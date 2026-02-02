@@ -18,7 +18,7 @@ def test_ocr_api(image_path):
         
         # Send to API
         response = requests.post(
-            'http://localhost:5000/api/ocr/handwritten',
+            'http://127.0.0.1:5000/api/ocr/handwritten',
             files=files,
             data=data
         )

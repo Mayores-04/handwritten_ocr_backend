@@ -11,13 +11,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ================== OCR Imports ==================
-try:
-    from ocr_engine import OCREngine
-    from utils import decode_base64_image
-except Exception as e:
-    logger.error(e)
-    OCREngine = None
-    decode_base64_image = None
+# We'll lazy-import OCREngine inside get_ocr_engine() to avoid
+# downloading large models during container start (prevents proxy 502s)
+OCREngine = None
+decode_base64_image = None
 
 # ================== App ==================
 app = Flask(__name__)
@@ -27,14 +24,26 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 
 CORS(
     app,
-    resources={r"/api/*": {
-        "origins": [
-            "https://handwritten-ocr-gold.vercel.app",
-            "http://localhost:3000"
-        ]
-    }},
-    supports_credentials=False
+    resources={
+        r"/api/*": {
+            # Allow requests from the frontend(s). Use '*' during testing/deploy
+            # if you're getting blocked by unknown origins.
+            "origins": "*"
+        }
+    },
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    methods=["GET", "POST", "OPTIONS"]
 )
+
+
+@app.after_request
+def _add_cors_headers(response):
+    # Ensure a basic ACAO header is present even on error responses
+    response.headers.setdefault("Access-Control-Allow-Origin", "*")
+    response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    return response
 
 # ================== OCR Engine ==================
 # ocr_engine = None
@@ -49,7 +58,15 @@ ocr_engine = None
 def get_ocr_engine():
     global ocr_engine
     if ocr_engine is None:
-        ocr_engine = OCREngine()
+        # Lazy import to avoid heavy work during module import time
+        try:
+            from ocr_engine import OCREngine as _OCREngine
+            from utils import decode_base64_image as _decode_base64_image
+            globals()['decode_base64_image'] = _decode_base64_image
+            ocr_engine = _OCREngine()
+        except Exception as e:
+            logger.exception("Failed to initialize OCREngine")
+            raise
     return ocr_engine
 
 # ================== Helpers ==================
