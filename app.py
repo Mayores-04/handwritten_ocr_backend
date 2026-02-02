@@ -12,7 +12,11 @@ from ocr_engine import OCREngine
 from utils import decode_base64_image
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[
+    "https://handwritten-ocr-gold.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+], supports_credentials=True)
 
 # Initialize OCR Engine (lazy loading)
 ocr_engine = OCREngine()
