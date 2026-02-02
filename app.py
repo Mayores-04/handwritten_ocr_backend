@@ -24,19 +24,31 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
 
 # ================== CORS (VERCEL SAFE) ==================
+
 CORS(
     app,
-    resources={r"/api/*": {"origins": "*"}},
-    methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"]
+    resources={r"/api/*": {
+        "origins": [
+            "https://handwritten-ocr-gold.vercel.app",
+            "http://localhost:3000"
+        ]
+    }},
+    supports_credentials=False
 )
 
 # ================== OCR Engine ==================
+# ocr_engine = None
+
+# def get_ocr_engine():
+#     global ocr_engine
+#     if ocr_engine is None and OCREngine:
+#         ocr_engine = OCREngine()
+#     return ocr_engine
 ocr_engine = None
 
 def get_ocr_engine():
     global ocr_engine
-    if ocr_engine is None and OCREngine:
+    if ocr_engine is None:
         ocr_engine = OCREngine()
     return ocr_engine
 
@@ -75,22 +87,26 @@ def health():
 
 @app.route("/api/ocr", methods=["POST"])
 def ocr():
-    engine = get_ocr_engine()
-    if not engine:
-        return jsonify({"success": False, "error": "OCR engine not available"}), 503
+    try:
+        engine = get_ocr_engine()  # lazy load
+        image = get_image_from_request()
 
-    image = get_image_from_request()
-    if not image:
-        return jsonify({"success": False, "error": "No image provided"}), 400
+        if not image:
+            return jsonify({"success": False, "error": "No image provided"}), 400
 
-    result = engine.recognize_text(image)
+        result = engine.recognize_text(image)
 
-    return jsonify({
-        "success": True,
-        "text": result.get("text"),
-        "confidence": result.get("confidence"),
-        "lines": result.get("lines", [])
-    })
+        return jsonify({
+            "success": True,
+            "text": result.get("text"),
+            "confidence": result.get("confidence"),
+            "lines": result.get("lines", [])
+        })
+
+    except Exception as e:
+        logger.exception("OCR failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 
 # ================== Run (Local only) ==================
 if __name__ == "__main__":
