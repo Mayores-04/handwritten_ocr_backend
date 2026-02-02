@@ -7,7 +7,8 @@ from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import os
 from typing import Any, Optional, Union
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+import io
 import logging
 
 # Configure logging
@@ -76,7 +77,13 @@ def get_image_from_request() -> Optional[Image.Image]:
     json_data: dict[str, Any] = request.get_json(silent=True) or {}
     
     if 'image' in request.files:
-        return Image.open(request.files['image'].stream)
+        file = request.files['image']
+        try:
+            data = file.read()
+            return Image.open(io.BytesIO(data))
+        except UnidentifiedImageError:
+            logger.error("Uploaded file is not a valid image or format not recognized")
+            return None
     
     if 'image_base64' in json_data and decode_base64_image is not None:
         return decode_base64_image(str(json_data['image_base64']))
@@ -211,7 +218,17 @@ def batch_extract() -> Union[Response, tuple[Response, int]]:
         
         results: list[dict[str, Any]] = []
         for file in files:
-            image = Image.open(file.stream)
+            try:
+                data = file.read()
+                image = Image.open(io.BytesIO(data))
+            except UnidentifiedImageError:
+                results.append({
+                    'filename': file.filename,
+                    'text': '',
+                    'confidence': 0.0,
+                    'error': 'Invalid image file'
+                })
+                continue
             result: dict[str, Any] = engine.recognize_text(image, mode='auto')
             results.append({
                 'filename': file.filename,
