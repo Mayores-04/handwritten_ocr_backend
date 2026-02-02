@@ -36,6 +36,23 @@ CORS(app,
      methods=['GET', 'POST', 'OPTIONS'],
      allow_headers=['Content-Type', 'Authorization'])
 
+# Add CORS headers to all responses (fallback for error cases)
+@app.after_request
+def add_cors_headers(response):
+    """Ensure CORS headers are always present"""
+    origin = request.headers.get('Origin', '')
+    allowed_origins = [
+        "https://handwritten-ocr-gold.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ]
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
 # Initialize OCR Engine (lazy loading with error handling)
 ocr_engine = None
 
