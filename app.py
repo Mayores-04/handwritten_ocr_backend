@@ -33,6 +33,9 @@ CORS(app,
          "http://localhost:3000",
          "http://127.0.0.1:3000"
      ], 
+      resources={r"/api/*": {"origins": [
+        "https://handwritten-ocr-gold.vercel.app"
+    ]}},
      supports_credentials=True,
      methods=['GET', 'POST', 'OPTIONS'],
      allow_headers=['Content-Type', 'Authorization'])
