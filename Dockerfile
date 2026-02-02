@@ -11,7 +11,7 @@ ENV TF_CPP_MIN_LOG_LEVEL=2
 
 # Install system dependencies for OpenCV & OCR
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1-mesa-dev \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -20,6 +20,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     tesseract-ocr \
     curl \
+    libgthread-2.0-0 \
+    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
