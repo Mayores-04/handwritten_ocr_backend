@@ -27,18 +27,21 @@ except Exception as e:
 app = Flask(__name__)
 
 # Configure CORS with explicit origins
-CORS(app, 
-     origins=[
-         "https://handwritten-ocr-gold.vercel.app",
-         "http://localhost:3000",
-         "http://127.0.0.1:3000"
-     ], 
-      resources={r"/api/*": {"origins": [
-        "https://handwritten-ocr-gold.vercel.app"
-    ]}},
-     supports_credentials=True,
-     methods=['GET', 'POST', 'OPTIONS'],
-     allow_headers=['Content-Type', 'Authorization'])
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": [
+                "https://handwritten-ocr-gold.vercel.app",
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+        }
+    },
+    supports_credentials=True,
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 
 # Add CORS headers to all responses (fallback for error cases)
 @app.after_request
