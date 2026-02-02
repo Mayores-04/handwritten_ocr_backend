@@ -61,6 +61,20 @@ def format_ocr_response(result):
 
 # ============ API Endpoints ============
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint"""
+    return jsonify({
+        'name': 'OCR API',
+        'version': '1.0.0',
+        'status': 'running',
+        'endpoints': {
+            'health': '/api/health',
+            'ocr': '/api/ocr (POST)',
+            'batch': '/api/batch-ocr (POST)'
+        }
+    })
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""

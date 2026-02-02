@@ -28,5 +28,8 @@ RUN pip install --upgrade pip \
 # Copy app source
 COPY . .
 
-# IMPORTANT: shell form so $PORT expands correctly on Render
-CMD gunicorn -w 1 -t 300 -b 0.0.0.0:$PORT app:app
+# Expose port
+EXPOSE 8000
+
+# Start with Gunicorn using config file
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "app:app"]
