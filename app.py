@@ -91,7 +91,8 @@ def root():
         "name": "OCR API",
         "status": "running",
         "health": "/api/health",
-        "ocr": "/api/ocr (POST)"
+        "ocr": "/api/ocr (POST)",
+        "ocr_handwritten": "/api/ocr/handwritten (POST)"
     })
 
 @app.route("/api/health", methods=["GET"])
@@ -107,21 +108,48 @@ def ocr():
     try:
         engine = get_ocr_engine()  # lazy load
         image = get_image_from_request()
+        mode = request.form.get("mode", "printed")  # Extract mode from request
 
         if not image:
             return jsonify({"success": False, "error": "No image provided"}), 400
 
-        result = engine.recognize_text(image)
+        result = engine.recognize_text(image, mode=mode)
 
         return jsonify({
             "success": True,
             "text": result.get("text"),
             "confidence": result.get("confidence"),
-            "lines": result.get("lines", [])
+            "lines": result.get("lines", []),
+            "mode_used": result.get("mode")
         })
 
     except Exception as e:
         logger.exception("OCR failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/ocr/handwritten", methods=["POST"])
+def ocr_handwritten():
+    """Dedicated endpoint for handwritten text recognition"""
+    try:
+        engine = get_ocr_engine()  # lazy load
+        image = get_image_from_request()
+
+        if not image:
+            return jsonify({"success": False, "error": "No image provided"}), 400
+
+        result = engine.recognize_text(image, mode="handwritten")
+
+        return jsonify({
+            "success": True,
+            "text": result.get("text"),
+            "confidence": result.get("confidence"),
+            "lines": result.get("lines", []),
+            "mode_used": result.get("mode")
+        })
+
+    except Exception as e:
+        logger.exception("Handwritten OCR failed")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

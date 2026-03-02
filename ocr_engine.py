@@ -40,13 +40,13 @@ class OCREngine:
     def handwriting_model(self) -> Any:
         return model_loader.load_handwriting_model()
     
-    def recognize_text(self, image: ImageInput, mode: str = 'auto') -> dict[str, Any]:
+    def recognize_text(self, image: ImageInput, mode: str = 'printed') -> dict[str, Any]:
         """
         Main OCR function
         
         Args:
             image: PIL Image or numpy array
-            mode: 'printed', 'handwritten', or 'auto'
+            mode: 'printed' or 'handwritten'
         
         Returns:
             dict with text, confidence, and word boxes
@@ -55,29 +55,45 @@ class OCREngine:
             # Direct handwriting method - fast, no fallbacks
             return self._run_handwriting_ocr(image)
         
-        # Printed and auto mode: just use EasyOCR (fast)
+        # Printed mode: use EasyOCR (fast)
         if self.easyocr_reader:
             return self._recognize_printed(image)
         
         return self._error_response('No OCR engine available. Please install easyocr.')
     
     def _run_handwriting_ocr(self, image: ImageInput) -> dict[str, Any]:
-        """Direct handwriting OCR - single method, fast"""
+        """Multi-pass handwriting OCR with best-candidate selection"""
         if not self.easyocr_reader:
             return self._error_response('No OCR engine available')
-        
-        # Upscale for better handwriting detection
-        processed = upscale_for_handwriting(image, 2.0)
-        result = self._easyocr_handwriting(processed)
-        result['mode'] = 'handwriting'
-        
-        # Apply post-processing corrections
-        if result.get('text'):
-            result['text'] = post_process_handwriting(result['text'])
-            if result.get('lines'):
-                result['lines'] = process_lines(result['lines'])
-        
-        return result
+
+        base = preprocess_image(image)
+        candidates: list[dict[str, Any]] = []
+
+        processed_variants = [
+            ('easyocr_handwriting_upscaled', upscale_for_handwriting(base, 2.0)),
+            ('easyocr_handwriting_grayscale', to_grayscale_enhanced(upscale_for_handwriting(base, 2.0))),
+            ('easyocr_handwriting_binary', binarize_handwriting(upscale_for_handwriting(base, 2.0))),
+            ('easyocr_handwriting_advanced', preprocess_handwriting_advanced(base)),
+        ]
+
+        for mode_tag, processed in processed_variants:
+            result = self._easyocr_handwriting(processed)
+            if result.get('text'):
+                result['mode'] = mode_tag
+                candidates.append(result)
+
+        if not candidates:
+            return self._empty_response('easyocr_handwriting')
+
+        best = self._pick_best_result(candidates)
+        best['mode'] = 'handwriting'
+
+        if best.get('text'):
+            best['text'] = post_process_handwriting(best['text'])
+            if best.get('lines'):
+                best['lines'] = process_lines(best['lines'])
+
+        return best
     
     def recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
         """Alias for handwriting OCR (backward compatibility)"""
@@ -86,47 +102,63 @@ class OCREngine:
     # ============ Printed Text Recognition ============
     
     def _recognize_printed(self, image: ImageInput) -> dict[str, Any]:
-        """Use EasyOCR for printed text recognition with layout preservation"""
+        """Multi-pass printed OCR with layout preservation and best-candidate selection"""
         try:
-            img_array = preprocess_image(image)
-            
-            results = self.easyocr_reader.readtext(
-                img_array,
-                batch_size=EASYOCR_CONFIG['batch_size'],
-                paragraph=EASYOCR_CONFIG['paragraph'],
-                min_size=EASYOCR_CONFIG['min_size'],
-                decoder=EASYOCR_CONFIG['decoder'],
-                beamWidth=EASYOCR_CONFIG['beamWidth'],
-            )
-            
-            if not results:
+            base = preprocess_image(image)
+            candidates: list[dict[str, Any]] = []
+
+            processed_variants = [
+                ('easyocr', base),
+                ('easyocr_enhanced', enhance_for_ocr(base)),
+                ('easyocr_grayscale', to_grayscale_enhanced(base)),
+                ('easyocr_binary', binarize_handwriting(base)),
+            ]
+
+            for mode_tag, processed in processed_variants:
+                candidate = self._run_easyocr_printed(processed, mode_tag)
+                if candidate.get('text'):
+                    candidates.append(candidate)
+
+            if not candidates:
                 return self._empty_response('easyocr')
-            
-            word_boxes, confidences = self._parse_easyocr_results(results)
-            lines = self._group_into_lines(word_boxes)
-            
-            combined_text = '\n'.join(lines)
-            avg_confidence = np.mean(confidences) if confidences else 0
-            
-            # Apply post-processing
-            combined_text = post_process_handwriting(combined_text)
-            lines = process_lines(lines)
-            
-            # Clean up word_boxes
-            for wb in word_boxes:
-                wb.pop('y_center', None)
-                wb.pop('x_left', None)
-            
-            return {
-                'text': combined_text,
-                'confidence': float(avg_confidence),
-                'mode': 'easyocr',
-                'word_boxes': word_boxes,
-                'lines': lines,
-                'line_count': len(lines)
-            }
+
+            best = self._pick_best_result(candidates)
+            best['mode'] = 'easyocr'
+            return best
         except Exception as e:
             return self._error_response(str(e))
+
+    def _run_easyocr_printed(self, img_array: Any, mode_tag: str) -> dict[str, Any]:
+        """Run one printed OCR pass and format output"""
+        results = self.easyocr_reader.readtext(
+            img_array,
+            batch_size=EASYOCR_CONFIG['batch_size'],
+            paragraph=EASYOCR_CONFIG['paragraph'],
+            min_size=EASYOCR_CONFIG['min_size'],
+            decoder=EASYOCR_CONFIG['decoder'],
+            beamWidth=EASYOCR_CONFIG['beamWidth'],
+        )
+
+        if not results:
+            return self._empty_response(mode_tag)
+
+        word_boxes, confidences = self._parse_easyocr_results(results)
+        lines = self._group_into_lines(word_boxes)
+        combined_text = '\n'.join(lines)
+        avg_confidence = np.mean(confidences) if confidences else 0
+
+        for wb in word_boxes:
+            wb.pop('y_center', None)
+            wb.pop('x_left', None)
+
+        return {
+            'text': combined_text,
+            'confidence': float(avg_confidence),
+            'mode': mode_tag,
+            'word_boxes': word_boxes,
+            'lines': lines,
+            'line_count': len(lines)
+        }
     
     def _parse_easyocr_results(self, results: list[Any]) -> tuple[list[dict[str, Any]], list[float]]:
         """Parse EasyOCR results into word boxes"""
@@ -272,6 +304,28 @@ class OCREngine:
             lines.append(line_text)
         
         return lines
+
+    def _pick_best_result(self, results: list[dict[str, Any]]) -> dict[str, Any]:
+        """Choose the best OCR result using confidence and text quality heuristics"""
+        def score(item: dict[str, Any]) -> float:
+            confidence = float(item.get('confidence') or 0.0)
+            text = str(item.get('text') or '')
+            alnum_count = sum(ch.isalnum() for ch in text)
+            text_len = len(text.strip())
+            density = (alnum_count / text_len) if text_len else 0.0
+            symbol_count = sum((not ch.isalnum()) and (not ch.isspace()) for ch in text)
+            symbol_ratio = (symbol_count / text_len) if text_len else 1.0
+            repeated_char_runs = sum(1 for i in range(2, len(text)) if text[i] == text[i - 1] == text[i - 2])
+
+            return (
+                (confidence * 0.72)
+                + (min(text_len, 220) / 220 * 0.20)
+                + (density * 0.12)
+                - (symbol_ratio * 0.08)
+                - (min(repeated_char_runs, 8) * 0.01)
+            )
+
+        return max(results, key=score)
     
     # ============ TrOCR Recognition ============
     

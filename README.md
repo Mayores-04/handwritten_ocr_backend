@@ -22,6 +22,7 @@ Input Image → CNN Feature Extraction → BiLSTM Sequence Modeling → CTC Deco
 ## 📦 Installation
 
 ### Prerequisites
+
 - Python 3.9+
 - pip
 
@@ -45,6 +46,7 @@ pip install -r requirements.txt
 ```
 
 ### Optional: Install Tesseract (fallback OCR)
+
 - Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
 - Linux: `sudo apt install tesseract-ocr`
 - Mac: `brew install tesseract`
@@ -64,11 +66,13 @@ Server will be available at `http://localhost:5000`
 ## 📡 API Endpoints
 
 ### Health Check
+
 ```
 GET /api/health
 ```
 
 ### Extract Text from Image
+
 ```
 POST /api/ocr
 Content-Type: multipart/form-data
@@ -79,6 +83,7 @@ Parameters:
 ```
 
 ### Handwritten Text Only
+
 ```
 POST /api/ocr/handwritten
 Content-Type: multipart/form-data
@@ -88,6 +93,7 @@ Parameters:
 ```
 
 ### Batch Processing
+
 ```
 POST /api/ocr/batch
 Content-Type: multipart/form-data
@@ -99,6 +105,7 @@ Parameters:
 ## 📝 Example Usage
 
 ### Python
+
 ```python
 import requests
 
@@ -113,20 +120,22 @@ with open('document.jpg', 'rb') as f:
 ```
 
 ### JavaScript (Frontend)
+
 ```javascript
 const formData = new FormData();
-formData.append('image', imageFile);
-formData.append('mode', 'handwritten');
+formData.append("image", imageFile);
+formData.append("mode", "handwritten");
 
-const response = await fetch('http://localhost:5000/api/ocr', {
-    method: 'POST',
-    body: formData
+const response = await fetch("http://localhost:5000/api/ocr", {
+  method: "POST",
+  body: formData,
 });
 const result = await response.json();
 console.log(result.text);
 ```
 
 ### cURL
+
 ```bash
 curl -X POST http://localhost:5000/api/ocr \
   -F "image=@handwritten_note.png" \
@@ -142,11 +151,13 @@ curl -X POST http://localhost:5000/api/ocr \
 2. Extract to `data/iam/` folder
 
 3. Run training:
+
 ```bash
 python train_handwriting_model.py --data ./data/iam --epochs 50
 ```
 
 ### Using Synthetic Data (Demo)
+
 ```bash
 python train_handwriting_model.py --epochs 10
 ```
@@ -207,4 +218,5 @@ backend/
 - [CRNN Paper](https://arxiv.org/abs/1507.05717)
 - [CRAFT Paper](https://arxiv.org/abs/1904.01941)
 - [IAM Handwriting Database](https://fki.tic.heia-fr.ch/databases/iam-handwriting-database)
+
 # handwritten_ocr_backend

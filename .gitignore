@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.history/
+
+# Environment variables
+.env
+.env.local
+
+# Debug files
+debug_*.png
+test_*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Model cache (EasyOCR downloads models here)
+~/.EasyOCR/
+
+# Test files (if you want to keep training scripts, remove these lines)
+# download_datasets.py
+# line_detection.py
+# test_api.py
+# test_char_model.py
+# test_ocr_layout.py
+# train_char_model.py
+# train_handwriting_model.py
