@@ -101,39 +101,23 @@ def binarize_handwriting(image) -> np.ndarray:
 
 def preprocess_handwriting_advanced(image) -> np.ndarray:
     """
-    Advanced preprocessing for handwriting:
-    - Upscale, denoise, enhance contrast, morphological operations
+    Fast preprocessing for handwriting:
+    - Upscale 2x and enhance contrast
     """
     img_array = to_numpy(image)
     
-    # Upscale
+    # Upscale 2x for better text detection (faster than 3x)
     height, width = img_array.shape[:2]
     if width < 2000:
-        scale = 3.0
+        scale = 2.0
         img_array = cv2.resize(img_array, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
     
-    # Grayscale
+    # Simple CLAHE for contrast without expensive denoising
     gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    
-    # Denoise
-    denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
-    
-    # CLAHE
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(denoised)
+    enhanced = clahe.apply(gray)
     
-    # Adaptive thresholding
-    binary = cv2.adaptiveThreshold(
-        enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY, 15, 8
-    )
-    
-    # Morphological operations
-    kernel = np.ones((2, 2), np.uint8)
-    dilated = cv2.dilate(binary, kernel, iterations=1)
-    result = cv2.erode(dilated, kernel, iterations=1)
-    
-    return cv2.cvtColor(result, cv2.COLOR_GRAY2RGB)
+    return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
 
 
 def to_grayscale_enhanced(image) -> np.ndarray:

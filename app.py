@@ -84,6 +84,25 @@ def get_image_from_request() -> Optional[Image.Image]:
 
     return None
 
+# ================== App Lifecycle ==================
+@app.before_request
+def warmup_ocr_engine():
+    """Pre-warm OCR engine (EasyOCR + Keras models) on first request"""
+    if not hasattr(app, '_ocr_warmed'):
+        try:
+            engine = get_ocr_engine()
+            
+            # Pre-load Keras models explicitly
+            logger.info("Pre-loading Keras models...")
+            _ = engine.handwriting_model  # Trigger lazy load
+            _ = engine.char_model         # Trigger lazy load
+            
+            app._ocr_warmed = True
+            logger.info("OCR Engine warmed successfully (EasyOCR + Keras models)")
+        except Exception as e:
+            logger.warning(f"OCR warmup failed: {e}")
+            app._ocr_warmed = False
+
 # ================== Routes ==================
 @app.route("/", methods=["GET"])
 def root():

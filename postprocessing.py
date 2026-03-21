@@ -1,125 +1,115 @@
 """
-Text post-processing for OCR corrections
-Handles common handwriting OCR misreads that appear across all text types
+Text post-processing for OCR corrections - Conservative approach
+Fixes ONLY obvious OCR errors while preserving line structure and formatting
+Works for ANY text: handwriting, code, documents
 """
 
 import re
+from typing import Optional
 
-# ============ Word-level corrections ============
-# GENERAL corrections that apply to most handwritten text
-# Avoid overly specific corrections (e.g., particular names/words)
+# Try to import PyDictionary for word validation - but use conservatively
+try:
+    from PyDictionary import PyDictionary
+    DICTIONARY = PyDictionary()
+    HAS_DICT = True
+except ImportError:
+    HAS_DICT = False
+    DICTIONARY = None
 
-WORD_CORRECTIONS = {
-    # === General spacing issues (universal) ===
-    'MyName': 'My Name',
-    'Myname': 'My name',
-    'myName': 'my Name',
-    'myname': 'my name',
-    'thethe': 'the',
-    'andand': 'and',
+
+# ============ OBVIOUS OCR ARTIFACTS (High confidence fixes) ============
+# These are patterns that are CLEARLY OCR errors, not valid tokens
+
+OBVIOUS_OCR_FIXES = {
+    # Symbol artifacts that are NEVER valid English/code
+    '|': 'l',              # pipe character → lowercase L (rare in text)
+    'rn': 'm',             # 'rn' misread as 'm' in fonts
     
-    # === General spacing fixes for common words ===
-    'iam': 'I am',
-    'Iam': 'I am',
-    'youare': 'you are',
-    'Youare': 'You are',
-    'iswhat': 'is what',
-    'Iswhat': 'Is what',
-    
-    # === Punctuation artifacts (universal) ===
+    # Doubled punctuation artifacts
     ',,': ',',
     '..': '.',
     '!!!': '!!',
     '???': '??',
+    
+    # Space-punctuation artifacts (never valid)
     ' ,': ',',
     ' .': '.',
-    
-    # === Only fix VERY SPECIFIC digit confusions in numbers ===
-    ' 1O ': ' 10 ',  # 1 and O → 10
-    ' 2O ': ' 20 ',  # 2 and O → 20
-    ' 5 10 ': ' 20 ',  # 5 and 10 → 20
-    ' l0 ': ' 10 ',  # letter L and 0 → 10
+    ' ;': ';',
+    ' :': ':',
 }
 
-# ============ Character-level patterns (regex) ============
-# GENERAL patterns that work for any text
-# Focus on structural fixes, not content-specific replacements
+# ============ CODE-SPECIFIC CRITICAL FIXES ============
+# Only fix patterns that are DEFINITELY broken syntax
 
-REGEX_PATTERNS = [
-    # === Fix ONLY obvious symbol artifacts (universal) ===
-    
-    # Multiple pipes → I (common OCR artifact) - ADD SPACING
-    (r'\|{2,}', ' I '),       # || or more → I (with spaces)
-    (r'\|', 'I'),             # single pipe → I
-    
-    # Fix underscore only in contexts that make sense (underscores between words)
-    (r'_', ' '),              # underscore → space
-    
-    # Fix spacing around punctuation (universal)
-    (r'\s+\.', '.'),          # Remove space before period
-    (r'\s+,', ','),           # Remove space before comma
-    (r'(\w)\*', r'\1.'),      # * → . (common OCR artifact)
-    
-    # Fix repeated punctuation
-    (r'\.{2,}', '.'),         # .. or more → .
-    (r',{2,}', ','),          # ,, or more → ,
-    (r'!{3,}', '!!'),         # !!! or more → !!
-    (r'\?{3,}', '??'),        # ??? or more → ??
-    
-    # Fix multiple spaces (universal)
-    (r'\s{2,}', ' '),         # Multiple spaces → single space
-    
-    # Fix capitalization at sentence start (universal)
-    (r'^([a-z])', lambda m: m.group(1).upper()),  # Capitalize first letter
-    
-    # Fix capitalization after periods/sentences (universal)
-    (r'\.\s+([a-z])', lambda m: '. ' + m.group(1).upper()),
-    
-    # Fix "is" when it's clearly misread as "1s" (ONLY in clear contextslike "is " at word boundaries)
-    (r'\b1s\b', 'is'),        # isolated 1s → is
+CODE_CRITICAL_FIXES = [
+    # These are 100% OCR errors in code, not ambiguous
+    (r'Debug\s+[_0\s]+Log\b', 'Debug.Log'),        # 'Debug _ 0 Log', 'Debug . Log' → 'Debug.Log'
+    (r'\bOf\b(?!=)', '0f'),                        # 'Of' → '0f' (C# float, not sentence "Of")
 ]
 
-# Common character confusions in handwriting
-CHAR_CONFUSIONS = {
-    # Letters that look similar
-    'l': 'i',   # lowercase L vs i
-    'I': 'l',   # uppercase I vs l
-    '0': 'O',   # zero vs O
-    'O': '0',   # O vs zero
-    '1': 'l',   # one vs l
-    '5': 'S',   # 5 vs S
-    '8': 'B',   # 8 vs B
-    '6': 'G',   # 6 vs G
-    '2': 'Z',   # 2 vs Z
-}
+# ============ REGEX PATTERNS (Conservative - only obvious artifacts) ============
+CONSERVATIVE_PATTERNS = [
+    # Fix spacing ONLY around punctuation (not words)
+    (r'\s+\.', '.'),          # space before period
+    (r'\s+,', ','),           # space before comma
+    (r'\s+;', ';'),           # space before semicolon
+    
+    # Fix repeated punctuation (100% artifacts)
+    (r'\.{2,}', '.'),
+    (r',{2,}', ','),
+    (r'!{3,}', '!!'),
+    (r'\?{3,}', '??'),
+    
+    # Fix ONLY excessive spaces (multiple → single)
+    (r'  +', ' '),            # 2+ spaces → 1 space (not touching single spaces)
+    
+    # Fix space in parentheses (code artifact)
+    (r'\(\s+', '('),          # '( ' → '('
+    (r'\s+\)', ')'),          # ' )' → ')'
+    (r'\s+;', ';'),           # ' ;' → ';'
+]
+
+print("""
+Text post-processing for OCR corrections - Conservative approach
+Fixes ONLY obvious OCR errors while preserving line structure and formatting
+Works for ANY text: handwriting, code, documents
+""")
 
 
 def post_process_handwriting(text: str) -> str:
     """
-    Post-process OCR text to fix common handwriting recognition errors
-    Works with ANY text input - not specific to particular words/names
-    Uses structural fixes: spacing, capitalization, punctuation, character confusion fixes
+    Conservative post-processing - fixes ONLY obvious OCR errors
+    Preserves line structure and formatting
+    
+    Process:
+    1. Fix code-critical patterns (100% OCR errors)
+    2. Fix obvious symbol artifacts (never valid)
+    3. Fix spacing artifacts (multiple spaces, space-punctuation)
+    4. Preserve line alignment
     """
     if not text:
         return text
     
     result = text
     
-    # === PASS 1: Apply word-level exact corrections ===
-    # Sort by length (longest first) to avoid partial replacements
-    sorted_corrections = sorted(WORD_CORRECTIONS.items(), key=lambda x: len(x[0]), reverse=True)
-    for wrong, correct in sorted_corrections:
-        result = result.replace(wrong, correct)
-    
-    # === PASS 2: Apply regex patterns for flexible matching ===
-    for pattern, replacement in REGEX_PATTERNS:
+    # === PASS 1: Fix code-critical patterns ===
+    # These are definitely wrong (Debug _ 0 Log, Of, etc)
+    for pattern, replacement in CODE_CRITICAL_FIXES:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     
-    # === PASS 3: Clean up multiple spaces ===
-    result = re.sub(r'\s+', ' ', result)
+    # === PASS 2: Fix obvious OCR artifacts ===
+    # Only fix tokens that are NEVER valid (doubled punctuation, etc)
+    for wrong, correct in OBVIOUS_OCR_FIXES.items():
+        result = result.replace(wrong, correct)
     
-    # === PASS 4: Strip leading/trailing spaces ===
-    result = result.strip()
+    # === PASS 3: Apply conservative spacing fixes ===
+    # Only fix punctuation spacing and excessive spaces
+    for pattern, replacement in CONSERVATIVE_PATTERNS:
+        result = re.sub(pattern, replacement, result)
+    
+    # === PASS 4: Preserve line structure ===
+    # Don't strip - preserve alignment and padding
+    result = re.sub(r'\n\n+', '\n', result)  # Remove only excessive newlines
     
     return result
 

@@ -62,38 +62,37 @@ class OCREngine:
         return self._error_response('No OCR engine available. Please install easyocr.')
     
     def _run_handwriting_ocr(self, image: ImageInput) -> dict[str, Any]:
-        """Multi-pass handwriting OCR with best-candidate selection"""
-        if not self.easyocr_reader:
-            return self._error_response('No OCR engine available')
-
+        """
+        Handwriting OCR - tries Keras first, falls back to EasyOCR
+        """
         base = preprocess_image(image)
-        candidates: list[dict[str, Any]] = []
+        processed = upscale_for_handwriting(base, 2.0)
+        
+        # === Try Keras model first (if available) ===
+        if self.handwriting_model:
+            try:
+                keras_result = self._keras_handwriting_recognize(processed)
+                if keras_result.get('text'):
+                    keras_result['mode'] = 'keras_handwriting'
+                    if keras_result.get('text'):
+                        keras_result['text'] = post_process_handwriting(keras_result['text'])
+                    return keras_result
+            except Exception as e:
+                print(f"Keras handwriting recognition failed: {e}. Falling back to EasyOCR...")
+        
+        # === Fallback to EasyOCR ===
+        if not self.easyocr_reader:
+            return self._error_response('No OCR engine available (neither Keras nor EasyOCR)')
 
-        processed_variants = [
-            ('easyocr_handwriting_upscaled', upscale_for_handwriting(base, 2.0)),
-            ('easyocr_handwriting_grayscale', to_grayscale_enhanced(upscale_for_handwriting(base, 2.0))),
-            ('easyocr_handwriting_binary', binarize_handwriting(upscale_for_handwriting(base, 2.0))),
-            ('easyocr_handwriting_advanced', preprocess_handwriting_advanced(base)),
-        ]
+        result = self._easyocr_handwriting(processed)
+        result['mode'] = 'handwriting_easyocr'
 
-        for mode_tag, processed in processed_variants:
-            result = self._easyocr_handwriting(processed)
-            if result.get('text'):
-                result['mode'] = mode_tag
-                candidates.append(result)
+        if result.get('text'):
+            result['text'] = post_process_handwriting(result['text'])
+            if result.get('lines'):
+                result['lines'] = process_lines(result['lines'])
 
-        if not candidates:
-            return self._empty_response('easyocr_handwriting')
-
-        best = self._pick_best_result(candidates)
-        best['mode'] = 'handwriting'
-
-        if best.get('text'):
-            best['text'] = post_process_handwriting(best['text'])
-            if best.get('lines'):
-                best['lines'] = process_lines(best['lines'])
-
-        return best
+        return result
     
     def recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
         """Alias for handwriting OCR (backward compatibility)"""
@@ -102,29 +101,14 @@ class OCREngine:
     # ============ Printed Text Recognition ============
     
     def _recognize_printed(self, image: ImageInput) -> dict[str, Any]:
-        """Multi-pass printed OCR with layout preservation and best-candidate selection"""
+        """Single-pass printed OCR - fast and effective"""
         try:
             base = preprocess_image(image)
-            candidates: list[dict[str, Any]] = []
-
-            processed_variants = [
-                ('easyocr', base),
-                ('easyocr_enhanced', enhance_for_ocr(base)),
-                ('easyocr_grayscale', to_grayscale_enhanced(base)),
-                ('easyocr_binary', binarize_handwriting(base)),
-            ]
-
-            for mode_tag, processed in processed_variants:
-                candidate = self._run_easyocr_printed(processed, mode_tag)
-                if candidate.get('text'):
-                    candidates.append(candidate)
-
-            if not candidates:
-                return self._empty_response('easyocr')
-
-            best = self._pick_best_result(candidates)
-            best['mode'] = 'easyocr'
-            return best
+            # Single best preprocessing: enhance for better text detection
+            processed = enhance_for_ocr(base)
+            result = self._run_easyocr_printed(processed, 'easyocr')
+            result['mode'] = 'easyocr'
+            return result
         except Exception as e:
             return self._error_response(str(e))
 
@@ -391,48 +375,100 @@ class OCREngine:
     # ============ Keras Model Recognition ============
     
     def _keras_handwriting_recognize(self, image: ImageInput) -> dict[str, Any]:
-        """Use custom Keras model for handwriting"""
-        img_array = self._preprocess_for_keras(image)
-        predictions = self.handwriting_model.predict(img_array)
-        text = self._ctc_decode(predictions)
+        """
+        Use custom Keras CRNN model for handwriting recognition
+        Processes image through trained Keras model
+        """
+        if not self.handwriting_model:
+            return self._error_response('Keras handwriting model not loaded')
         
-        return {
-            'text': text,
-            'confidence': 0.75,
-            'mode': 'keras_handwriting'
-        }
+        try:
+            # Preprocess image for Keras
+            img_array = self._preprocess_for_keras(image)
+            
+            # Get predictions from Keras model
+            predictions = self.handwriting_model.predict(img_array, verbose=0)
+            
+            # Decode predictions
+            text = self._ctc_decode(predictions)
+            
+            # Calculate confidence from predictions
+            confidence = float(np.max(predictions)) if predictions.size > 0 else 0.5
+            
+            if not text or len(text.strip()) == 0:
+                return self._error_response('Keras model produced empty output')
+            
+            return {
+                'text': text,
+                'confidence': confidence,
+                'lines': [text],
+                'line_count': 1,
+                'mode': 'keras_handwriting'
+            }
+        except Exception as e:
+            return self._error_response(f'Keras inference failed: {str(e)}')
     
     def _preprocess_for_keras(self, image: ImageInput) -> np.ndarray[Any, Any]:
-        """Preprocess image for Keras handwriting model"""
+        """
+        Preprocess image for Keras CRNN model (32x128 grayscale)
+        Input: PIL Image or numpy array
+        Output: Normalized grayscale (1, 32, 128, 1)
+        """
+        # Convert to numpy if needed
         if isinstance(image, Image.Image):
-            gray = np.array(image.convert('L'))
+            img_np = np.array(image.convert('RGB'))
+            if len(img_np.shape) == 3:
+                gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img_np
         else:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image.copy()
         
+        # Apply denoising and binarization
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         gray = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV, 11, 2
         )
         
+        # Dilate to maintain text connectivity
         kernel = np.ones((2, 2), np.uint8)
         gray = cv2.dilate(gray, kernel, iterations=1)
+        
+        # Resize to model input size (32x128)
         gray = cv2.resize(gray, (128, 32))
+        
+        # Normalize to [0, 1]
         gray = gray.astype('float32') / 255.0
         
+        # Add batch and channel dimensions: (batch=1, height=32, width=128, channels=1)
         return np.expand_dims(np.expand_dims(gray, axis=-1), axis=0)
     
     def _ctc_decode(self, predictions: Any) -> str:
-        """CTC decoding for Keras model output"""
+        """
+        Decode CTC predictions from Keras CRNN model
+        Removes blanks and consecutive duplicates
+        """
+        if predictions.size == 0:
+            return ""
+        
+        # Get the character with highest probability at each timestep
         decoded = []
-        prev_char = None
+        prev_char_idx = 0
         
         for timestep in predictions[0]:
             char_idx = np.argmax(timestep)
-            if char_idx != 0 and char_idx != prev_char:
+            
+            # Skip blank (CTC blank = index 0)
+            # Skip consecutive duplicates
+            if char_idx != 0 and char_idx != prev_char_idx:
                 if char_idx - 1 < len(self.char_list):
                     decoded.append(self.char_list[char_idx - 1])
-            prev_char = char_idx
+            
+            prev_char_idx = char_idx
         
         return ''.join(decoded)
     

@@ -19,12 +19,16 @@ class ModelLoader:
         self._trocr_loaded = False
     
     def load_easyocr(self):
-        """Load EasyOCR reader"""
+        """Load EasyOCR reader with GPU support if available"""
         if self.easyocr_reader is None:
             try:
                 import easyocr
-                self.easyocr_reader = easyocr.Reader(['en'], gpu=False)
-                print("EasyOCR loaded successfully")
+                import torch
+                # Auto-detect GPU availability
+                use_gpu = torch.cuda.is_available()
+                device_name = "GPU" if use_gpu else "CPU"
+                self.easyocr_reader = easyocr.Reader(['en'], gpu=use_gpu)
+                print(f"EasyOCR loaded successfully ({device_name})")
             except Exception as e:
                 print(f"Warning: Could not load EasyOCR: {e}")
         return self.easyocr_reader
