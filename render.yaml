@@ -3,12 +3,19 @@ services:
     runtime: docker
     name: handwritten-ocr-backend
     dockerfilePath: ./Dockerfile
+    region: ohio
     plan: free
     healthCheckPath: /api/health
+    startCommand: gunicorn app:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 300
     envVars:
       - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
         value: "1"
       - key: TF_CPP_MIN_LOG_LEVEL
         value: "2"
       - key: CUDA_VISIBLE_DEVICES
         value: ""
+      - key: FLASK_ENV
+        value: production
+    autoDeploy: true
