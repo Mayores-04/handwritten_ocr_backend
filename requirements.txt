@@ -16,10 +16,7 @@ keras>=3.0.0
 easyocr>=1.7.0
 
 # Dictionary-based text correction (for universal OCR accuracy)
-PyDictionary>=2.3.1
-
-# Optional: fuzzy string matching (built-in with difflib, but these add more features)
-python-Levenshtein>=0.21.1
+PyDictionary==2.0.1
 
 # Additional utilities
 werkzeug>=3.0.1
