@@ -5,19 +5,15 @@ python-dotenv>=1.0.0
 
 # Image Processing
 pillow>=10.4.0
-opencv-python>=4.9.0.80
-numpy<2.0.0
+opencv-python-headless>=4.9.0.80
+numpy>=1.24.0
 
-# Deep Learning - Keras/TensorFlow for OCR
-tensorflow>=2.16.0
-keras>=3.0.0
-
-# OCR Libraries
+# OCR Libraries (EasyOCR only - no TensorFlow/Keras for free tier)
 easyocr>=1.7.0
 
-# Dictionary-based text correction (for universal OCR accuracy)
+# Dictionary-based text correction
 PyDictionary==2.0.1
 
-# Additional utilities
+# Server
 werkzeug>=3.0.1
 gunicorn>=21.2.0
