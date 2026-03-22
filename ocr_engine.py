@@ -1,14 +1,14 @@
 """
-OCR Engine using EasyOCR for Image to Text Recognition
-Optimized for free-tier deployment (512MB RAM limit)
-Supports both printed text and handwritten text
+OCR Engine using EasyOCR + Keras for handwritten text recognition
+Supports both printed text (EasyOCR) and handwritten text (EasyOCR + Keras models)
 """
 
 import numpy as np
 from PIL import Image
 from typing import Any, Union
+import os
 
-from config import EASYOCR_CONFIG, HANDWRITING_EASYOCR_CONFIG
+from config import EASYOCR_CONFIG, HANDWRITING_EASYOCR_CONFIG, MODEL_PATHS
 from preprocessing import (
     to_numpy, preprocess_image, enhance_for_ocr,
     upscale_for_handwriting
@@ -20,10 +20,12 @@ ImageInput = Union[Image.Image, np.ndarray[Any, Any]]
 
 
 class OCREngine:
-    """Main OCR Engine - EasyOCR only for free-tier compatibility"""
+    """Main OCR Engine - EasyOCR + Keras for comprehensive text recognition"""
     
     def __init__(self) -> None:
         self._easyocr_reader = None
+        self._handwriting_model = None
+        self._char_model = None
     
     @property
     def easyocr_reader(self):
@@ -32,6 +34,48 @@ class OCREngine:
             import easyocr
             self._easyocr_reader = easyocr.Reader(['en'], gpu=False, model_storage_directory='./models')
         return self._easyocr_reader
+    
+    @property
+    def handwriting_model(self):
+        """Lazy-load Keras handwriting model"""
+        if self._handwriting_model is None:
+            self._handwriting_model = self.load_handwriting_model()
+        return self._handwriting_model
+    
+    @property
+    def char_model(self):
+        """Lazy-load Keras character model"""
+        if self._char_model is None:
+            self._char_model = self.load_char_model()
+        return self._char_model
+    
+    def load_handwriting_model(self):
+        """Load handwriting model from disk"""
+        try:
+            import keras
+            model_path = MODEL_PATHS.get('handwriting_model', 'models/handwriting_model.keras')
+            if os.path.exists(model_path):
+                return keras.models.load_model(model_path)
+            else:
+                print(f"Warning: Handwriting model not found at {model_path}")
+                return None
+        except Exception as e:
+            print(f"Error loading handwriting model: {e}")
+            return None
+    
+    def load_char_model(self):
+        """Load character model from disk"""
+        try:
+            import keras
+            model_path = MODEL_PATHS.get('char_model', 'models/char_model.keras')
+            if os.path.exists(model_path):
+                return keras.models.load_model(model_path)
+            else:
+                print(f"Warning: Character model not found at {model_path}")
+                return None
+        except Exception as e:
+            print(f"Error loading character model: {e}")
+            return None
     
     def recognize_text(self, image: ImageInput, mode: str = 'printed') -> dict[str, Any]:
         """
@@ -53,7 +97,7 @@ class OCREngine:
             return self._error_response(str(e))
     
     def _recognize_printed(self, image: ImageInput) -> dict[str, Any]:
-        """Printed text recognition"""
+        """Printed text recognition using EasyOCR"""
         try:
             base = preprocess_image(image)
             processed = enhance_for_ocr(base)
@@ -62,7 +106,7 @@ class OCREngine:
             return self._error_response(str(e))
     
     def _recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
-        """Handwritten text recognition"""
+        """Handwritten text recognition using EasyOCR + Keras models"""
         try:
             base = preprocess_image(image)
             processed = upscale_for_handwriting(base, 2.0)

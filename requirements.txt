@@ -8,8 +8,12 @@ pillow>=10.4.0
 opencv-python-headless>=4.9.0.80
 numpy>=1.24.0
 
-# OCR Libraries (EasyOCR only - no TensorFlow/Keras for free tier)
+# OCR Libraries
 easyocr>=1.7.0
+
+# Deep Learning (for Keras models)
+tensorflow>=2.13.0
+keras>=3.0.0
 
 # Dictionary-based text correction
 PyDictionary==2.0.1

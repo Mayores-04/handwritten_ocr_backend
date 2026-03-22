@@ -13,7 +13,9 @@ services:
       - key: PYTHONDONTWRITEBYTECODE
         value: "1"
       - key: TF_CPP_MIN_LOG_LEVEL
-        value: "3"
+        value: "2"
+      - key: CUDA_VISIBLE_DEVICES
+        value: ""
       - key: FLASK_ENV
         value: production
     autoDeploy: true

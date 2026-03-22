@@ -85,8 +85,30 @@ def get_image_from_request() -> Optional[Image.Image]:
     return None
 
 # ================== App Lifecycle ==================
-# No warmup needed - models lazy-load on first request
-# This saves ~400MB RAM on startup for free-tier compatibility
+@app.before_request
+def warmup_ocr_engine():
+    """Pre-warm OCR engine (EasyOCR + Keras models) on first request"""
+    # Skip warmup for health check to avoid timeout on deployment
+    if request.path == "/api/health":
+        return
+    
+    if not hasattr(app, '_ocr_warmed'):
+        try:
+            engine = get_ocr_engine()
+            
+            # Pre-load EasyOCR and Keras models
+            logger.info("Pre-loading EasyOCR reader...")
+            _ = engine.easyocr_reader  # Trigger lazy load
+            
+            logger.info("Pre-loading Keras models...")
+            _ = engine.handwriting_model  # Trigger lazy load
+            _ = engine.char_model         # Trigger lazy load
+            
+            app._ocr_warmed = True
+            logger.info("OCR Engine warmed successfully (EasyOCR + Keras models ready)")
+        except Exception as e:
+            logger.warning(f"OCR warmup failed: {e}")
+            app._ocr_warmed = False
 
 # ================== Routes ==================
 @app.route("/", methods=["GET"])
