@@ -88,6 +88,10 @@ def get_image_from_request() -> Optional[Image.Image]:
 @app.before_request
 def warmup_ocr_engine():
     """Pre-warm OCR engine (EasyOCR + Keras models) on first request"""
+    # Skip warmup for health check to avoid timeout on deployment
+    if request.path == "/api/health":
+        return
+    
     if not hasattr(app, '_ocr_warmed'):
         try:
             engine = get_ocr_engine()
@@ -116,9 +120,9 @@ def root():
 
 @app.route("/api/health", methods=["GET"])
 def health():
+    # Return immediately without loading models to pass Render's health check
     return jsonify({
         "status": "healthy",
-        "ocr_engine": "ready" if get_ocr_engine() else "not_loaded",
         "port": os.environ.get("PORT")
     })
 
