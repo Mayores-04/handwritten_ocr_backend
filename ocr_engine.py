@@ -1,14 +1,15 @@
 """
-OCR Engine using EasyOCR + Keras for handwritten text recognition
-Supports both printed text (EasyOCR) and handwritten text (EasyOCR + Keras models)
+OCR Engine using Keras CRNN as primary model
+Supports both printed text (EasyOCR) and handwritten text (Keras CRNN)
 """
 
 import numpy as np
 from PIL import Image
 from typing import Any, Union
 import os
+import cv2
 
-from config import EASYOCR_CONFIG, HANDWRITING_EASYOCR_CONFIG, MODEL_PATHS
+from config import EASYOCR_CONFIG, HANDWRITING_EASYOCR_CONFIG, MODEL_PATHS, CHAR_CLASSES
 from preprocessing import (
     to_numpy, preprocess_image, enhance_for_ocr,
     upscale_for_handwriting
@@ -20,12 +21,16 @@ ImageInput = Union[Image.Image, np.ndarray[Any, Any]]
 
 
 class OCREngine:
-    """Main OCR Engine - EasyOCR + Keras for comprehensive text recognition"""
+    """Main OCR Engine - Keras CRNN primary for handwritten, EasyOCR for printed"""
     
     def __init__(self) -> None:
         self._easyocr_reader = None
         self._handwriting_model = None
         self._char_model = None
+        self.img_height, self.img_width, self.max_length = 32, 128, 32
+        self.char_list = CHAR_CLASSES
+        self.char_to_num = {char: idx for idx, char in enumerate(self.char_list)}
+        self.num_to_char = {idx: char for idx, char in enumerate(self.char_list)}
     
     @property
     def easyocr_reader(self):
@@ -37,7 +42,7 @@ class OCREngine:
     
     @property
     def handwriting_model(self):
-        """Lazy-load Keras handwriting model"""
+        """Lazy-load Keras handwriting CRNN model"""
         if self._handwriting_model is None:
             self._handwriting_model = self.load_handwriting_model()
         return self._handwriting_model
@@ -50,7 +55,7 @@ class OCREngine:
         return self._char_model
     
     def load_handwriting_model(self):
-        """Load handwriting model from disk"""
+        """Load Keras handwriting CRNN model from disk"""
         try:
             import keras
             model_path = MODEL_PATHS.get('handwriting_model', 'models/handwriting_model.keras')
@@ -64,7 +69,7 @@ class OCREngine:
             return None
     
     def load_char_model(self):
-        """Load character model from disk"""
+        """Load Keras character model from disk"""
         try:
             import keras
             model_path = MODEL_PATHS.get('char_model', 'models/char_model.keras')
@@ -90,7 +95,7 @@ class OCREngine:
         """
         try:
             if mode == 'handwritten':
-                return self._recognize_handwritten(image)
+                return self._recognize_handwritten_keras(image)
             else:
                 return self._recognize_printed(image)
         except Exception as e:
@@ -105,21 +110,99 @@ class OCREngine:
         except Exception as e:
             return self._error_response(str(e))
     
-    def _recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
-        """Handwritten text recognition using EasyOCR + Keras models"""
+    def _recognize_handwritten_keras(self, image: ImageInput) -> dict[str, Any]:
+        """Handwritten text recognition using Keras CRNN model (PRIMARY)"""
         try:
-            base = preprocess_image(image)
-            processed = upscale_for_handwriting(base, 2.0)
-            result = self._run_easyocr(processed, HANDWRITING_EASYOCR_CONFIG, 'handwritten')
+            if self.handwriting_model is None:
+                raise Exception("Handwriting model not loaded")
             
-            if result.get('text'):
-                result['text'] = post_process_handwriting(result['text'])
-                if result.get('lines'):
-                    result['lines'] = process_lines(result['lines'])
+            # Preprocess for Keras CRNN
+            img_array = self._preprocess_for_crnn(image)
             
-            return result
+            # Predict using CRNN
+            predictions = self.handwriting_model.predict(img_array, verbose=0)
+            
+            # Decode predictions
+            text, confidence = self._decode_crnn_predictions(predictions[0])
+            
+            # Split into lines if multiple lines detected
+            lines = [text] if text else []
+            
+            return {
+                'text': text,
+                'confidence': float(confidence),
+                'mode': 'handwritten',
+                'word_boxes': [],
+                'lines': lines,
+                'line_count': len(lines)
+            }
         except Exception as e:
             return self._error_response(str(e))
+    
+    def _preprocess_for_crnn(self, image: ImageInput) -> np.ndarray:
+        """Preprocess image for CRNN model input"""
+        # Convert PIL Image to numpy array
+        if isinstance(image, Image.Image):
+            img = np.array(image)
+        else:
+            img = image
+        
+        # Convert to grayscale if needed
+        if len(img.shape) == 3:
+            if img.shape[2] == 3:
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            elif img.shape[2] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+        
+        # Resize to CRNN input size
+        resized = cv2.resize(img, (self.img_width, self.img_height))
+        
+        # Normalize
+        normalized = resized.astype(np.float32) / 255.0
+        
+        # Add channel dimension
+        img_proc = np.expand_dims(normalized, -1)
+        
+        # Add batch dimension
+        img_batch = np.expand_dims(img_proc, 0)
+        
+        return img_batch
+    
+    def _decode_crnn_predictions(self, predictions: np.ndarray) -> tuple[str, float]:
+        """
+        Decode CRNN predictions to text
+        
+        Args:
+            predictions: Shape (max_length, num_classes)
+        
+        Returns:
+            (text, confidence)
+        """
+        # Get character index for each position (argmax)
+        char_indices = np.argmax(predictions, axis=1)
+        
+        # Get confidence scores (max probability)
+        confidences = np.max(predictions, axis=1)
+        
+        # Convert indices to characters
+        text_chars = []
+        valid_confidences = []
+        
+        for idx, conf in zip(char_indices, confidences):
+            # Skip padding (index 0)
+            if idx == 0:
+                continue
+            
+            # Map index to character
+            if idx - 1 < len(self.char_list):
+                char = self.char_list[idx - 1]
+                text_chars.append(char)
+                valid_confidences.append(float(conf))
+        
+        text = ''.join(text_chars)
+        avg_confidence = np.mean(valid_confidences) if valid_confidences else 0.0
+        
+        return text, avg_confidence
     
     def _run_easyocr(self, img_array: Any, config: dict[str, Any], mode: str) -> dict[str, Any]:
         """Run EasyOCR with given config"""

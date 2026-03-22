@@ -87,7 +87,7 @@ def get_image_from_request() -> Optional[Image.Image]:
 # ================== App Lifecycle ==================
 @app.before_request
 def warmup_ocr_engine():
-    """Pre-warm OCR engine (EasyOCR + Keras models) on first request"""
+    """Pre-warm OCR engine (Keras CRNN primary) on first request"""
     # Skip warmup for health check to avoid timeout on deployment
     if request.path == "/api/health":
         return
@@ -96,16 +96,16 @@ def warmup_ocr_engine():
         try:
             engine = get_ocr_engine()
             
-            # Pre-load EasyOCR and Keras models
-            logger.info("Pre-loading EasyOCR reader...")
+            # Pre-load Keras CRNN model (PRIMARY for handwritten)
+            logger.info("Pre-loading Keras CRNN model (primary handwriting engine)...")
+            _ = engine.handwriting_model  # Trigger lazy load
+            
+            # Pre-load EasyOCR reader (for printed text)
+            logger.info("Pre-loading EasyOCR reader (for printed text)...")
             _ = engine.easyocr_reader  # Trigger lazy load
             
-            logger.info("Pre-loading Keras models...")
-            _ = engine.handwriting_model  # Trigger lazy load
-            _ = engine.char_model         # Trigger lazy load
-            
             app._ocr_warmed = True
-            logger.info("OCR Engine warmed successfully (EasyOCR + Keras models ready)")
+            logger.info("OCR Engine warmed successfully (Keras CRNN + EasyOCR ready)")
         except Exception as e:
             logger.warning(f"OCR warmup failed: {e}")
             app._ocr_warmed = False
