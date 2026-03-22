@@ -16,6 +16,10 @@ services:
         value: "2"
       - key: CUDA_VISIBLE_DEVICES
         value: ""
+      - key: TF_FORCE_GPU_ALLOW_GROWTH
+        value: "true"
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "3"
       - key: FLASK_ENV
         value: production
     autoDeploy: true

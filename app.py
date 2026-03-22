@@ -92,20 +92,9 @@ def warmup_ocr_engine():
     if request.path == "/api/health":
         return
     
-    if not hasattr(app, '_ocr_warmed'):
-        try:
-            engine = get_ocr_engine()
-            
-            # Pre-load Keras models explicitly
-            logger.info("Pre-loading Keras models...")
-            _ = engine.handwriting_model  # Trigger lazy load
-            _ = engine.char_model         # Trigger lazy load
-            
-            app._ocr_warmed = True
-            logger.info("OCR Engine warmed successfully (EasyOCR + Keras models)")
-        except Exception as e:
-            logger.warning(f"OCR warmup failed: {e}")
-            app._ocr_warmed = False
+    # Skip warmup entirely on free tier - models load on-demand instead
+    # This saves ~400MB of RAM on startup
+    return
 
 # ================== Routes ==================
 @app.route("/", methods=["GET"])
