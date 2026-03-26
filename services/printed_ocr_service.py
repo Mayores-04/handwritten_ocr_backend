@@ -2,10 +2,8 @@
 
 import logging
 from typing import Any, List
-
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
-
 from preprocessing.image_processors import preprocess_image
 
 logger = logging.getLogger(__name__)

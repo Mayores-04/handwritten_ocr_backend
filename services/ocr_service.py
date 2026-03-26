@@ -13,7 +13,6 @@ from .printed_ocr_service import PrintedOCRService
 logger = logging.getLogger(__name__)
 ImageInput = Union[Image.Image, np.ndarray]
 
-
 class OCRService:
     """Coordinator service that delegates OCR by mode."""
 
