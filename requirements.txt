@@ -1,23 +1,19 @@
 # Core Dependencies
 flask>=3.0.0
 flask-cors>=4.0.0
-python-dotenv>=1.0.0
 
 # Image Processing
 pillow>=10.4.0
-opencv-python-headless>=4.9.0.80
-numpy>=1.24.0
+opencv-python>=4.9.0.80
+numpy<2.0.0
 
-# OCR Libraries
-easyocr>=1.7.0
-
-# Deep Learning (for Keras models)
-tensorflow>=2.13.0
+# Deep Learning - Keras/TensorFlow for OCR (primary engine)
+tensorflow>=2.16.0
 keras>=3.0.0
 
-# Dictionary-based text correction
-PyDictionary==2.0.1
+# EasyOCR for printed text (fast and accurate)
+easyocr>=1.7.1
 
-# Server
+# Utilities
 werkzeug>=3.0.1
 gunicorn>=21.2.0

@@ -1,36 +1,32 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import os
-import io
-import logging
-from typing import Any, Optional
-from PIL import Image, UnidentifiedImageError
+"""
+Handwritten OCR API - Main Application
+Simple, clean, and reliable OCR service
+"""
 
-# ================== Logging ==================
-logging.basicConfig(level=logging.INFO)
+import os
+import logging
+from flask import Flask, jsonify
+from flask_cors import CORS
+
+# ============ Logging Setup ============
+logging.basicConfig(
+    level=logging.INFO,  # Changed from DEBUG to INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# ================== OCR Imports ==================
-# We'll lazy-import OCREngine inside get_ocr_engine() to avoid
-# downloading large models during container start (prevents proxy 502s)
-OCREngine = None
-decode_base64_image = None
+# ============ Import Services ============
+from services import OCRService
+from api import create_api_blueprint
 
-# ================== App ==================
+# ============ Initialize App ============
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB limit
 
-# ================== CORS (VERCEL SAFE) ==================
-
+# ============ CORS Setup ============
 CORS(
     app,
-    resources={
-        r"/api/*": {
-            # Allow requests from the frontend(s). Use '*' during testing/deploy
-            # if you're getting blocked by unknown origins.
-            "origins": "*"
-        }
-    },
+    resources={r"/api/*": {"origins": "*"}},
     supports_credentials=True,
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
     methods=["GET", "POST", "OPTIONS"]
@@ -38,148 +34,110 @@ CORS(
 
 
 @app.after_request
-def _add_cors_headers(response):
-    # Ensure a basic ACAO header is present even on error responses
+def add_cors_headers(response):
+    """Ensure CORS headers on all responses"""
     response.headers.setdefault("Access-Control-Allow-Origin", "*")
     response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
     return response
 
-# ================== OCR Engine ==================
-# ocr_engine = None
 
-# def get_ocr_engine():
-#     global ocr_engine
-#     if ocr_engine is None and OCREngine:
-#         ocr_engine = OCREngine()
-#     return ocr_engine
-ocr_engine = None
+# ============ Initialize OCR Service ============
+logger.info("Initializing OCR Service...")
+ocr_service = OCRService()
+logger.info("OCR Service initialized")
 
-def get_ocr_engine():
-    global ocr_engine
-    if ocr_engine is None:
-        # Lazy import to avoid heavy work during module import time
-        try:
-            from ocr_engine import OCREngine as _OCREngine
-            from utils import decode_base64_image as _decode_base64_image
-            globals()['decode_base64_image'] = _decode_base64_image
-            ocr_engine = _OCREngine()
-        except Exception as e:
-            logger.exception("Failed to initialize OCREngine")
-            raise
-    return ocr_engine
+# ============ Register API Routes ============
+api_blueprint = create_api_blueprint(ocr_service)
+app.register_blueprint(api_blueprint)
 
-# ================== Helpers ==================
-def get_image_from_request() -> Optional[Image.Image]:
-    json_data: dict[str, Any] = request.get_json(silent=True) or {}
+# ============ Load Models at Startup ============
+logger.info("Loading models at startup...")
+try:
+    ocr_service.model_service.warmup_models()
+    logger.info("✓ Keras models loaded successfully at startup")
+except Exception as e:
+    logger.error(f"Failed to load Keras models at startup: {e}")
 
-    if "image" in request.files:
-        try:
-            return Image.open(io.BytesIO(request.files["image"].read()))
-        except UnidentifiedImageError:
-            return None
+logger.info("Loading EasyOCR at startup...")
+try:
+    ocr_service._ensure_easyocr_loaded()
+    logger.info("✓ EasyOCR loaded successfully at startup")
+except Exception as e:
+    logger.error(f"Failed to load EasyOCR at startup: {e}")
 
-    if "image_base64" in json_data and decode_base64_image:
-        return decode_base64_image(json_data["image_base64"])
 
-    return None
+# ============ Root Routes ============
 
-# ================== App Lifecycle ==================
-@app.before_request
-def warmup_ocr_engine():
-    """Pre-warm OCR engine (Keras CRNN primary) on first request"""
-    # Skip warmup for health check to avoid timeout on deployment
-    if request.path == "/api/health":
-        return
-    
-    if not hasattr(app, '_ocr_warmed'):
-        try:
-            engine = get_ocr_engine()
-            
-            # Pre-load Keras CRNN model (PRIMARY for handwritten)
-            logger.info("Pre-loading Keras CRNN model (primary handwriting engine)...")
-            _ = engine.handwriting_model  # Trigger lazy load
-            
-            # Pre-load EasyOCR reader (for printed text)
-            logger.info("Pre-loading EasyOCR reader (for printed text)...")
-            _ = engine.easyocr_reader  # Trigger lazy load
-            
-            app._ocr_warmed = True
-            logger.info("OCR Engine warmed successfully (Keras CRNN + EasyOCR ready)")
-        except Exception as e:
-            logger.warning(f"OCR warmup failed: {e}")
-            app._ocr_warmed = False
-
-# ================== Routes ==================
-@app.route("/", methods=["GET"])
+@app.route('/', methods=['GET'])
 def root():
+    """Root endpoint - returns API info"""
     return jsonify({
-        "name": "OCR API",
-        "status": "running",
-        "health": "/api/health",
-        "ocr": "/api/ocr (POST)",
-        "ocr_handwritten": "/api/ocr/handwritten (POST)"
+        'name': 'Handwritten OCR API',
+        'version': '2.0',
+        'status': 'running',
+        'docs': '/api/info',
+        'endpoints': {
+            'health': '/api/health',
+            'status': '/api/status',
+            'ocr': '/api/ocr',
+            'ocr_printed': '/api/ocr/printed',
+            'ocr_handwritten': '/api/ocr/handwritten'
+        }
     })
 
-@app.route("/api/health", methods=["GET"])
-def health():
-    # Return immediately without loading models to pass Render's health check
+
+# ============ Error Handlers ============
+
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors"""
     return jsonify({
-        "status": "healthy",
-        "port": os.environ.get("PORT")
-    })
-
-@app.route("/api/ocr", methods=["POST"])
-def ocr():
-    try:
-        engine = get_ocr_engine()  # lazy load
-        image = get_image_from_request()
-        mode = request.form.get("mode", "printed")  # Extract mode from request
-
-        if not image:
-            return jsonify({"success": False, "error": "No image provided"}), 400
-
-        result = engine.recognize_text(image, mode=mode)
-
-        return jsonify({
-            "success": True,
-            "text": result.get("text"),
-            "confidence": result.get("confidence"),
-            "lines": result.get("lines", []),
-            "mode_used": result.get("mode")
-        })
-
-    except Exception as e:
-        logger.exception("OCR failed")
-        return jsonify({"success": False, "error": str(e)}), 500
+        'success': False,
+        'error': 'Endpoint not found',
+        'hint': 'See /api/info for available endpoints'
+    }), 404
 
 
-@app.route("/api/ocr/handwritten", methods=["POST"])
-def ocr_handwritten():
-    """Dedicated endpoint for handwritten text recognition"""
-    try:
-        engine = get_ocr_engine()  # lazy load
-        image = get_image_from_request()
-
-        if not image:
-            return jsonify({"success": False, "error": "No image provided"}), 400
-
-        result = engine.recognize_text(image, mode="handwritten")
-
-        return jsonify({
-            "success": True,
-            "text": result.get("text"),
-            "confidence": result.get("confidence"),
-            "lines": result.get("lines", []),
-            "mode_used": result.get("mode")
-        })
-
-    except Exception as e:
-        logger.exception("Handwritten OCR failed")
-        return jsonify({"success": False, "error": str(e)}), 500
+@app.errorhandler(405)
+def method_not_allowed(error):
+    """Handle 405 errors"""
+    return jsonify({
+        'success': False,
+        'error': 'Method not allowed'
+    }), 405
 
 
-# ================== Run (Local only) ==================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle file too large"""
+    return jsonify({
+        'success': False,
+        'error': 'File size exceeds 10MB limit'
+    }), 413
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle internal server errors"""
+    logger.exception(f"Internal server error: {str(error)}")
+    return jsonify({
+        'success': False,
+        'error': 'Internal server error'
+    }), 500
+
+
+# ============ Run Application ============
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    logger.info(f"Starting server on port {port} (debug={debug})")
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=debug,
+        use_reloader=False,     # Disable auto-reloader to avoid multiprocessing
+        threaded=True           # Use threading instead of multiprocessing
+    )
