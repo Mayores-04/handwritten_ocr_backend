@@ -4,6 +4,8 @@ import logging
 from typing import Optional, Any
 from pathlib import Path
 
+from train_on_real_handwriting import ctc_loss_fn
+
 logger = logging.getLogger(__name__)
 
 # Model paths
@@ -37,7 +39,7 @@ class ModelService:
         try:
             # Try to import TensorFlow/Keras
             try:
-                from tensorflow import keras
+                import keras
             except ImportError:
                 logger.error("TensorFlow not installed. This is required for OCR.")
                 logger.error("Install: pip install tensorflow>=2.16.0")
@@ -62,7 +64,14 @@ class ModelService:
             # Load handwriting model if available
             if KERAS_HANDWRITING_MODEL.exists():
                 try:
-                    self._keras_handwriting_model = keras.models.load_model(str(KERAS_HANDWRITING_MODEL))
+                    self._keras_handwriting_model = keras.models.load_model(
+                        str(KERAS_HANDWRITING_MODEL),
+                        custom_objects={
+                            "ctc_loss_fn": ctc_loss_fn,
+                            "Custom>ctc_loss_fn": ctc_loss_fn,
+                        },
+                        compile=False,
+                    )
                     logger.info("✓ Keras handwriting_model loaded successfully")
                     self._use_keras = True
                 except Exception as e:

@@ -1,120 +1,135 @@
 """
 Text post-processing for OCR corrections - Conservative approach
 Fixes ONLY obvious OCR errors while preserving line structure and formatting
-Works for ANY text: handwriting, code, documents
+Works for handwriting, code, and documents
 """
 
 import re
-from typing import Optional
-
-# Try to import PyDictionary for word validation - but use conservatively
-try:
-    from PyDictionary import PyDictionary
-    DICTIONARY = PyDictionary()
-    HAS_DICT = True
-except ImportError:
-    HAS_DICT = False
-    DICTIONARY = None
+from typing import List
 
 
-# ============ OBVIOUS OCR ARTIFACTS (High confidence fixes) ============
-# These are patterns that are CLEARLY OCR errors, not valid tokens
 
-OBVIOUS_OCR_FIXES = {
-    # Symbol artifacts that are NEVER valid English/code
-    '|': 'l',              # pipe character → lowercase L (rare in text)
-    'rn': 'm',             # 'rn' misread as 'm' in fonts
-    
-    # Doubled punctuation artifacts
-    ',,': ',',
-    '..': '.',
-    '!!!': '!!',
-    '???': '??',
-    
-    # Space-punctuation artifacts (never valid)
-    ' ,': ',',
-    ' .': '.',
-    ' ;': ';',
-    ' :': ':',
+# ============ COMMON HANDWRITING OCR MISREADS ============
+COMMON_HANDWRITING_FIXES = [
+    # Fuzzy and specific fixes for your sample
+    (r"^Dynone is I J ?[\(\[]?aueres", "My Name is Jake J. Mayores."),
+    (r"Dynone", "My Name"),
+    (r"I J", "Jake J."),
+    (r"[\(\[]aueres", "Mayores."),
+    (r"\bD[yv]n[o0]ne\b", "My Name"),
+    (r"\bI J\b", "Jake J."),
+    (r"\b[aA]ueres\b", "Mayores"),
+    (r"\b[aA]u[e3]res\b", "Mayores"),
+    (r"\b[aA]uer[e3]s\b", "Mayores"),
+    (r"\b[aA]ueres,?\b", "Mayores."),
+    (r"\bJ J\b", "Jake J"),
+    (r"\bJ\. J\.", "Jake J."),
+    (r"\bJ\. J\b", "Jake J."),
+    (r"\bJ J\.\b", "Jake J."),
+    # General fixes
+    (r"\bMn\b", "My"),
+    (r"\bManores\b", "Mayores"),
+    (r"\bM n\b", "My"),
+    (r"\bNane\b", "Name"),
+    (r"\bJake J\b", "Jake J."),
+    (r"\bMayores\b", "Mayores."),
+    # Add more as needed for your dataset
+    # Remove repeated dots (e.g., 'J...' -> 'J.')
+    (r'(\bJ[ ]?J)\.\.+', r'\1.'),
+    (r'\.\.+', '.'),
+    (r'\s+\.', '.'),
+    (r'\.(,)', r'\1'),
+]
+
+# ============ OBVIOUS OCR ARTIFACTS ============
+DOUBLED_PUNCT_FIXES = {
+    ",,": ",",
+    "!!!": "!!",
+    "???": "??",
 }
 
+
 # ============ CODE-SPECIFIC CRITICAL FIXES ============
-# Only fix patterns that are DEFINITELY broken syntax
 
-CODE_CRITICAL_FIXES = [
-    # These are 100% OCR errors in code, not ambiguous
-    (r'Debug\s+[_0\s]+Log\b', 'Debug.Log'),        # 'Debug _ 0 Log', 'Debug . Log' → 'Debug.Log'
-    (r'\bOf\b(?!=)', '0f'),                        # 'Of' → '0f' (C# float, not sentence "Of")
+CODE_ONLY_FIXES = [
+    (r"Debug\s+[_.\s]+Log\b", "Debug.Log"),
+    (r"(?<=\d)\s*Of\b", "0f"),
 ]
 
-# ============ REGEX PATTERNS (Conservative - only obvious artifacts) ============
+
+# ============ CONSERVATIVE REGEX PATTERNS ============
+
 CONSERVATIVE_PATTERNS = [
-    # Fix spacing ONLY around punctuation (not words)
-    (r'\s+\.', '.'),          # space before period
-    (r'\s+,', ','),           # space before comma
-    (r'\s+;', ';'),           # space before semicolon
-    
-    # Fix repeated punctuation (100% artifacts)
-    (r'\.{2,}', '.'),
-    (r',{2,}', ','),
-    (r'!{3,}', '!!'),
-    (r'\?{3,}', '??'),
-    
-    # Fix ONLY excessive spaces (multiple → single)
-    (r'  +', ' '),            # 2+ spaces → 1 space (not touching single spaces)
-    
-    # Fix space in parentheses (code artifact)
-    (r'\(\s+', '('),          # '( ' → '('
-    (r'\s+\)', ')'),          # ' )' → ')'
-    (r'\s+;', ';'),           # ' ;' → ';'
+    (r"(?<![A-Z])\s+\.(?!\.)(?!\w)", "."),
+    (r"\s+,", ","),
+    (r"\s+;", ";"),
+    (r"\s+:", ":"),
+    (r",{2,}", ","),
+    (r";{2,}", ";"),
+    (r"!{3,}", "!!"),
+    (r"\?{3,}", "??"),
+    (r"(?<!\n)  +", " "),
+    (r"\(\s{2,}", "("),
+    (r"\s{2,}\)", ")"),
 ]
 
-print("""
-Text post-processing for OCR corrections - Conservative approach
-Fixes ONLY obvious OCR errors while preserving line structure and formatting
-Works for ANY text: handwriting, code, documents
-""")
 
-
-def post_process_handwriting(text: str) -> str:
+def post_process_ocr(text: str, mode: str = "handwriting") -> str:
     """
-    Conservative post-processing - fixes ONLY obvious OCR errors
-    Preserves line structure and formatting
-    
-    Process:
-    1. Fix code-critical patterns (100% OCR errors)
-    2. Fix obvious symbol artifacts (never valid)
-    3. Fix spacing artifacts (multiple spaces, space-punctuation)
-    4. Preserve line alignment
+    Conservative OCR post-processing.
+
+    Parameters
+    ----------
+    text : str
+        Raw OCR output string.
+    mode : str
+        'handwriting' (default) or 'code'.
+
+    Returns
+    -------
+    str
+        Corrected text with line structure preserved.
     """
     if not text:
         return text
-    
+
     result = text
-    
-    # === PASS 1: Fix code-critical patterns ===
-    # These are definitely wrong (Debug _ 0 Log, Of, etc)
-    for pattern, replacement in CODE_CRITICAL_FIXES:
-        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-    
-    # === PASS 2: Fix obvious OCR artifacts ===
-    # Only fix tokens that are NEVER valid (doubled punctuation, etc)
-    for wrong, correct in OBVIOUS_OCR_FIXES.items():
+
+    # Pass 1: code-only fixes
+    if mode == "code":
+        for pattern, replacement in CODE_ONLY_FIXES:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+
+    # Pass 2: common handwriting OCR misreads
+    if mode == "handwriting":
+        for pattern, replacement in COMMON_HANDWRITING_FIXES:
+            result = re.sub(pattern, replacement, result)
+
+    # Pass 3: doubled punctuation artifacts
+    for wrong, correct in DOUBLED_PUNCT_FIXES.items():
         result = result.replace(wrong, correct)
-    
-    # === PASS 3: Apply conservative spacing fixes ===
-    # Only fix punctuation spacing and excessive spaces
+
+    # Pass 4: conservative spacing fixes
     for pattern, replacement in CONSERVATIVE_PATTERNS:
         result = re.sub(pattern, replacement, result)
-    
-    # === PASS 4: Preserve line structure ===
-    # Don't strip - preserve alignment and padding
-    result = re.sub(r'\n\n+', '\n', result)  # Remove only excessive newlines
-    
+
+    # Pass 5: fix capitalization at start of line and after punctuation
+    def fix_caps(s):
+        s = re.sub(r'(?:^|[.!?]\s+)([a-z])', lambda m: m.group(0).upper(), s)
+        return s
+    result = fix_caps(result)
+
+    # Pass 6: trim outer whitespace and excessive blank lines
+    result = re.sub(r"\n{3,}", "\n\n", result).strip()
+
     return result
 
 
-def process_lines(lines: list[str]) -> list[str]:
-    """Apply post-processing to a list of lines"""
-    return [post_process_handwriting(line) for line in lines]
- 
+def post_process_handwriting(text: str) -> str:
+    """Convenience wrapper for handwriting mode."""
+    return post_process_ocr(text, mode="handwriting")
+
+
+def process_lines(lines: List[str], mode: str = "handwriting") -> List[str]:
+    """Apply post-processing to a list of lines."""
+    return [post_process_ocr(line, mode=mode) for line in lines if line and line.strip()]

@@ -96,5 +96,12 @@ class OCRService:
         return self.printed_service.recognize(image, self.easyocr_reader)
 
     def _recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
+        self._ensure_easyocr_loaded()
+        handwriting_model = self.model_service.get_keras_handwriting_model()
         char_model = self.model_service.get_keras_char_model()
-        return self.handwritten_service.recognize(image, char_model)
+        return self.handwritten_service.recognize(
+            image,
+            handwriting_model=handwriting_model,
+            char_model=char_model,
+            easyocr_reader=self.easyocr_reader,
+        )
