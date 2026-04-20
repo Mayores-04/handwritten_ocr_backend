@@ -1,4 +1,4 @@
-"""Printed OCR service using EasyOCR with preprocessing and spatial sorting."""
+"""This is my printed OCR service. I use EasyOCR with some preprocessing and spatial sorting to get the best results."""
 
 import logging
 from typing import Any, List
@@ -14,21 +14,27 @@ class PrintedOCRService:
 
     @staticmethod
     def _bbox_top(det: tuple) -> float:
+        # I use this to get the top y-coordinate of a bounding box.
         return float(min(pt[1] for pt in det[0]))
 
     @staticmethod
     def _bbox_bottom(det: tuple) -> float:
+        # I use this to get the bottom y-coordinate of a bounding box.
         return float(max(pt[1] for pt in det[0]))
 
     @staticmethod
     def _bbox_left(det: tuple) -> float:
+        # I use this to get the left x-coordinate of a bounding box.
+
         return float(min(pt[0] for pt in det[0]))
 
     @staticmethod
     def _bbox_right(det: tuple) -> float:
+        # I use this to get the right x-coordinate of a bounding box.
         return float(max(pt[0] for pt in det[0]))
 
     def _normalize_detection(self, detection: tuple) -> dict[str, Any]:
+        # I use this to turn a raw EasyOCR detection into a dictionary with all the info I need.
         text = str(detection[1]).replace('\n', ' ').strip()
         left = self._bbox_left(detection)
         right = self._bbox_right(detection)
@@ -48,10 +54,10 @@ class PrintedOCRService:
 
     def _preprocess_for_easyocr(self, pil_image: Image.Image) -> np.ndarray:
         """
-        Prepare a PIL image for EasyOCR:
-        1. Convert to RGB numpy
-        2. Upscale short images so EasyOCR has enough resolution
-        3. Mild sharpening + contrast boost
+        I wrote this to prepare images for EasyOCR:
+        - Convert to RGB numpy
+        - Upscale small images so EasyOCR has enough resolution
+        - Mild sharpening and contrast boost
         """
         img = pil_image.convert('RGB')
         w, h = img.size
@@ -76,7 +82,7 @@ class PrintedOCRService:
         return np.array(img)
 
     def _sort_detections_spatially(self, results: list, line_height_tolerance: float = 0.6) -> list:
-        """Sort detections in reading order (top-to-bottom, left-to-right)."""
+        """I use this to sort detections in reading order (top-to-bottom, left-to-right)."""
         if not results:
             return results
 
@@ -114,7 +120,7 @@ class PrintedOCRService:
         detections: List[dict[str, Any]],
         line_height_tolerance: float = 0.7,
     ) -> List[List[dict[str, Any]]]:
-        """Cluster token detections into visual text lines."""
+        """I use this to cluster token detections into visual text lines."""
         if not detections:
             return []
 
@@ -142,7 +148,7 @@ class PrintedOCRService:
         return lines
 
     def _compose_line_text(self, line_detections: List[dict[str, Any]]) -> str:
-        """Join tokens from one line while preserving visible horizontal gaps."""
+        """I use this to join tokens from one line while preserving visible horizontal gaps."""
         if not line_detections:
             return ''
 
@@ -178,7 +184,7 @@ class PrintedOCRService:
         return ''.join(parts).strip()
 
     def recognize(self, image: Any, easyocr_reader: Any) -> dict[str, Any]:
-        """Printed OCR using EasyOCR with preprocessing + spatial ordering."""
+        """This is my main function for printed OCR using EasyOCR, with preprocessing and spatial ordering."""
         try:
             pil_image = preprocess_image(image)
             img_array = self._preprocess_for_easyocr(pil_image)

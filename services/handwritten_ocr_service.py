@@ -1,4 +1,4 @@
-"""Handwritten OCR service with fallback chain: Keras CRNN -> EasyOCR."""
+"""This is my handwritten OCR service. I set it up so it tries my Keras CRNN model first, and if that doesn't work, it falls back to EasyOCR."""
 
 import logging
 from typing import Any, List
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class HandwrittenOCRService:
     @staticmethod
     def _final_postprocess(result: dict) -> dict:
-        """Apply postprocessing to the final output text and lines, and add debug info."""
+        """After getting the raw OCR output, I always run my postprocessing to clean up the text and add some debug info so I can see what changed."""
         if not result.get("success"):
             return result
         raw_text = result.get("text", "")
@@ -36,7 +36,7 @@ class HandwrittenOCRService:
         self.keras_confidence_threshold = keras_confidence_threshold
 
     def _prepare_line_for_crnn(self, line_gray: np.ndarray) -> np.ndarray:
-        """Resize and normalize a line image for CRNN input."""
+        """This function is where I resize and normalize each line image so my CRNN model can handle it."""
         target_height = 32
         target_width = 256
 
@@ -76,11 +76,10 @@ class HandwrittenOCRService:
         easyocr_reader: Any = None,
     ) -> dict[str, Any]:
         """
-        Recognize handwritten text using:
-        1. Keras CRNN as primary
-        2. EasyOCR as the only fallback
-
-        char_model is intentionally ignored.
+        Here's where I actually run the recognition:
+        First, I try my Keras CRNN model.
+        If that fails or the confidence is too low, I let EasyOCR take a shot.
+        (Just a note to myself: char_model is ignored here.)
         """
         try:
             if handwriting_model is None and easyocr_reader is None:
@@ -182,14 +181,14 @@ class HandwrittenOCRService:
 
     @staticmethod
     def _correct_lines(raw_lines: List[str]) -> tuple[str, str, List[str]]:
-        """Run postprocessing and return (combined_text, plain_text, corrected_lines)."""
+        """I use this to run postprocessing on each line and return the results in different formats."""
         corrected = [post_process_handwriting(line) for line in raw_lines if line and line.strip()]
         combined = "\n".join(corrected)
         plain = " ".join(corrected)
         return combined, plain, corrected
 
     def _recognize_with_crnn(self, lines: List[tuple], handwriting_model: Any) -> dict[str, Any]:
-        """CRNN sequence-to-sequence recognition with CTC decoding."""
+        """This is my CRNN sequence-to-sequence recognition with CTC decoding."""
         charset = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,;:!?\'\"()-"
         all_lines_text = []
         all_confs = []
@@ -226,7 +225,7 @@ class HandwrittenOCRService:
         }
 
     def _decode_crnn_prediction(self, pred: np.ndarray, charset: str) -> tuple[str, float]:
-        """Greedy CTC decode."""
+        """This is my greedy CTC decode function for the CRNN model."""
         batch_preds = np.expand_dims(pred, axis=0)
         input_len = np.array([pred.shape[0]], dtype=np.int32)
 
@@ -243,7 +242,7 @@ class HandwrittenOCRService:
         return "".join(chars), conf
 
     def _recognize_with_easyocr(self, img_array: np.ndarray, easyocr_reader: Any) -> dict[str, Any]:
-        """EasyOCR fallback for handwritten text with enhanced preprocessing."""
+        """If my own model can't handle it, this is where I let EasyOCR try. I also do a bunch of preprocessing to give it the best chance."""
         try:
             allowlist = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?\'\"()- "
 
@@ -402,7 +401,7 @@ class HandwrittenOCRService:
             }
 
     def _segment_lines(self, binary: np.ndarray, gray: np.ndarray) -> List[tuple]:
-        """Segment text lines from binary image."""
+        """This is my line segmentation function. I use it to break the image into lines for OCR."""
         h, _ = binary.shape
         h_proj = binary.sum(axis=1).astype(float)
         max_ink = h_proj.max()

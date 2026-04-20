@@ -44,3 +44,18 @@ Thumbs.db
 # test_ocr_layout.py
 # train_char_model.py
 # train_handwriting_model.py
+
+# model files
+models/*.keras
+checkpoints/
+*.h5
+*.ckpt
+*.index
+*.data-00000-of-00001
+
+# virtual env
+.venv/
+
+# python cache
+__pycache__/
+*.pyc

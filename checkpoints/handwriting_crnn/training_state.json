@@ -1,7 +1,0 @@
-{
-  "next_epoch": 13,
-  "best_loss": 315.5477294921875,
-  "patience_counter": 10,
-  "epochs_target": 100,
-  "batch_size": 32
-}

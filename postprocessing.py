@@ -1,7 +1,5 @@
 """
-Text post-processing for OCR corrections - Conservative approach
-Fixes ONLY obvious OCR errors while preserving line structure and formatting
-Works for handwriting, code, and documents
+This is my OCR post-processing script. I wrote it to clean up the most obvious mistakes that OCR makes, but I try not to mess with the original line structure or formatting. I use this for my own handwriting, code, and other documents.
 """
 
 import re

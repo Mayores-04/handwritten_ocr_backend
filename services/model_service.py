@@ -1,4 +1,6 @@
-"""Model loading and management service - Keras/TensorFlow Primary Engine"""
+"""This is my model loading and management service. I use Keras/TensorFlow as my primary OCR engine."""
+
+# I keep the model paths here so I can easily change them if I move things around.
 
 import logging
 from typing import Optional, Any
@@ -16,8 +18,7 @@ KERAS_HANDWRITING_MODEL = MODEL_DIR / "handwriting_model.keras"
 
 class ModelService:
     """
-    Manages model loading for OCR with Keras/TensorFlow as primary engine.
-    Supports lazy loading to avoid long initialization times.
+    I use this class to manage loading my OCR models. I use lazy loading so I don't have to wait forever on startup.
     """
     
     def __init__(self):
@@ -28,10 +29,8 @@ class ModelService:
     
     def load_keras_models(self) -> bool:
         """
-        Load Keras/TensorFlow models for character and handwriting recognition.
-        Returns True if at least one model loaded successfully.
-        
-        REQUIRED: TensorFlow/Keras is the primary OCR engine for this project.
+        This is where I load my Keras/TensorFlow models for character and handwriting recognition.
+        If TensorFlow isn't installed, I log an error and tell myself how to fix it.
         """
         if self._keras_char_model is not None or self._keras_handwriting_model is not None:
             return True
@@ -92,8 +91,7 @@ class ModelService:
     
     def warmup_models(self) -> bool:
         """
-        Warm up models on startup.
-        Keras/TensorFlow is required - no fallback.
+        I use this to warm up my models on startup. No fallback here—Keras/TensorFlow is required.
         """
         if self._models_warmed:
             return True
@@ -119,19 +117,19 @@ class ModelService:
             return False
     
     def get_keras_char_model(self) -> Optional[Any]:
-        """Get the Keras character classification model"""
+        """I use this to get the Keras character classification model."""
         if self._keras_char_model is None:
             self.load_keras_models()
         return self._keras_char_model
     
     def get_keras_handwriting_model(self) -> Optional[Any]:
-        """Get the Keras handwriting recognition model"""
+        """I use this to get the Keras handwriting recognition model."""
         if self._keras_handwriting_model is None:
             self.load_keras_models()
         return self._keras_handwriting_model
     
     def get_status(self) -> dict[str, Any]:
-        """Get detailed status of loaded models"""
+        """This gives me a quick status of which models are loaded and what engine I'm using."""
         return {
             'keras_char_model': self._keras_char_model is not None,
             'keras_handwriting_model': self._keras_handwriting_model is not None,

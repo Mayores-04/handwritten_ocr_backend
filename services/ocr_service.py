@@ -1,4 +1,4 @@
-"""OCR Service coordinator: routes to printed or handwritten service."""
+"""This is my OCR Service coordinator. It decides whether to use the printed or handwritten OCR service."""
 
 import logging
 from typing import Any, Union
@@ -14,9 +14,11 @@ logger = logging.getLogger(__name__)
 ImageInput = Union[Image.Image, np.ndarray]
 
 class OCRService:
-    """Coordinator service that delegates OCR by mode."""
+    """This class just delegates OCR to the right service based on the mode I ask for."""
 
     def __init__(self):
+        # I set up both the printed and handwritten services here, and keep track of whether the models are warmed up.
+        # I also set the confidence threshold for handwritten OCR.
         self.model_service = model_service
         self._models_warmed = False
 
@@ -37,12 +39,14 @@ class OCRService:
         )
 
     def _ensure_models_warmed(self):
+        # I call this to make sure my models are loaded before I try to use them.
         if self._models_warmed:
             return
         self._models_warmed = True
         self.model_service.warmup_models()
 
     def _ensure_easyocr_loaded(self):
+        # I call this to make sure EasyOCR is loaded before I use it.
         if self._easyocr_initialized:
             return
 
@@ -60,6 +64,7 @@ class OCRService:
             logger.error("EasyOCR failed to load: %s", e)
 
     def recognize(self, image: ImageInput, mode: str = 'printed') -> dict[str, Any]:
+        # This is the main entry point. I just call the right function based on the mode.
         if image is None:
             return {'success': False, 'error': 'No image provided', 'text': '', 'mode_used': mode}
 
@@ -81,6 +86,7 @@ class OCRService:
             return {'success': False, 'error': str(e), 'text': '', 'mode_used': mode}
 
     def _recognize_printed(self, image: ImageInput) -> dict[str, Any]:
+        # This is where I run printed OCR using EasyOCR.
         self._ensure_easyocr_loaded()
         if not self.easyocr_reader:
             return {
@@ -96,6 +102,7 @@ class OCRService:
         return self.printed_service.recognize(image, self.easyocr_reader)
 
     def _recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
+        # This is where I run handwritten OCR using my own model (if available) or EasyOCR.
         self._ensure_easyocr_loaded()
         handwriting_model = self.model_service.get_keras_handwriting_model()
         char_model = self.model_service.get_keras_char_model()
