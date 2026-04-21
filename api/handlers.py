@@ -1,6 +1,7 @@
 """API request handlers"""
 
 import io
+import re
 import logging
 from typing import Any, Optional, Tuple
 from PIL import Image, UnidentifiedImageError
@@ -146,6 +147,20 @@ def handle_ocr_request(ocr_service: Any) -> dict[str, Any]:
         else:
             # Use lines format (default)
             result['format'] = 'lines'
+        # Ensure `lines` is always a list when successful. Some handwritten
+        # backends may return a single long paragraph or omit `lines`.
+        lines_val = result.get('lines')
+        if not isinstance(lines_val, list) or len(lines_val) == 0:
+            text_val = (result.get('text') or '')
+            derived = [ln.strip() for ln in re.split(r"\r?\n", text_val) if ln.strip()]
+            if not derived:
+                # Fallback: split on semicolons/braces for code-like samples
+                parts = [p.strip() for p in re.split(r';|\}|\{', text_val) if p and p.strip()]
+                if parts:
+                    # re-append semicolons to look like original tokens where sensible
+                    derived = [p if re.search(r'[;{}]$', p) else p + ';' for p in parts]
+            result['lines'] = derived
+            result['line_count'] = len(derived)
     
     # Log result
     if result.get('success'):

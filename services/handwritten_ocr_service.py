@@ -10,7 +10,7 @@ import tensorflow as tf
 from preprocessing.image_processors import preprocess_image
 from preprocessing.image_utils import otsu_threshold
 from postprocessing import post_process_handwriting
-
+from .printed_ocr_service import PrintedOCRService
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,13 @@ class HandwrittenOCRService:
                 else None
             )
 
+            # Also compute printed-style spatial grouping using PrintedOCRService
+            try:
+                printed_service = PrintedOCRService()
+                printed_result = printed_service.recognize(pil_image, easyocr_reader)
+            except Exception:
+                printed_result = None
+
             if (
                 crnn_result
                 and crnn_result.get("success")
@@ -137,11 +144,26 @@ class HandwrittenOCRService:
                 best_result = crnn_result
 
             elif easyocr_result and easyocr_result.get("success"):
+                # Prefer printed-style spatial grouping for line segmentation
+                # when it yields more visual lines or higher confidence.
+                chosen = easyocr_result
+                try:
+                    if printed_result and printed_result.get("success"):
+                        p_lines = printed_result.get("lines", [])
+                        p_conf = printed_result.get("confidence", 0.0)
+                        e_lines = easyocr_result.get("lines", [])
+                        e_conf = easyocr_result.get("confidence", 0.0)
+
+                        if p_lines and (len(p_lines) > len(e_lines) or p_conf - e_conf > 0.03):
+                            chosen = printed_result
+                except Exception:
+                    pass
+
                 logger.info(
                     "[OCR] Using EasyOCR fallback (confidence: %.3f)",
-                    easyocr_result.get("confidence", 0.0),
+                    chosen.get("confidence", 0.0),
                 )
-                best_result = easyocr_result
+                best_result = chosen
 
             else:
                 logger.info("[OCR] All engines failed, returning error result.")
