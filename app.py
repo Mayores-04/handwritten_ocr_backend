@@ -8,6 +8,10 @@ import logging
 from flask import Flask, jsonify
 from flask_cors import CORS
 
+from utils.env_loader import load_env_local
+
+load_env_local()
+
 # ============ Logging Setup ============
 logging.basicConfig(
     level=logging.INFO,  # Changed from DEBUG to INFO
@@ -55,16 +59,11 @@ app.register_blueprint(api_blueprint)
 logger.info("Loading models at startup...")
 try:
     ocr_service.model_service.warmup_models()
-    logger.info("✓ Keras models loaded successfully at startup")
+    logger.info("Keras model warmup finished")
 except Exception as e:
     logger.error(f"Failed to load Keras models at startup: {e}")
 
-logger.info("Loading EasyOCR at startup...")
-try:
-    ocr_service._ensure_easyocr_loaded()
-    logger.info("✓ EasyOCR loaded successfully at startup")
-except Exception as e:
-    logger.error(f"Failed to load EasyOCR at startup: {e}")
+logger.info("EasyOCR will be loaded lazily when printed OCR or fallback OCR needs it.")
 
 
 # ============ Root Routes ============

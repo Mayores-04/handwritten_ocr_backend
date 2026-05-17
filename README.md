@@ -1,222 +1,216 @@
-# Image to Text OCR Backend (Keras)
+# Handwritten OCR Backend
 
-A Flask-based backend for Optical Character Recognition (OCR) that supports both **printed** and **handwritten** text recognition using Keras/TensorFlow deep learning models.
+Flask API for printed and handwritten OCR.
 
-## 🧠 Architecture
+- Printed OCR uses EasyOCR.
+- Handwritten OCR tries the local Keras/TensorFlow CRNN model first, then falls back to EasyOCR when the model is missing, fails, or returns low confidence.
+- Training uses the real IAM word dataset already stored in `data/full_dataset`.
 
-### OCR Models Used
+## Current Important Paths
 
-1. **Keras-OCR Pipeline** (for printed text)
-   - **CRAFT** (Character-Region Awareness For Text detection) - CNN-based text detector
-   - **CRNN** (CNN + BiLSTM + CTC) - Recognizer
-
-2. **Custom CRNN Model** (for handwritten text)
-   - **CNN layers** - Feature extraction from images
-   - **Bidirectional LSTM** - Sequence modeling
-   - **CTC Loss** - Connectionist Temporal Classification for training
-
-```
-Input Image → CNN Feature Extraction → BiLSTM Sequence Modeling → CTC Decoding → Text Output
-```
-
-## 📦 Installation
-
-### Prerequisites
-
-- Python 3.9+
-- pip
-
-### Setup
-
-```bash
-# Navigate to backend folder
-cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+```text
+handwritten_ocr_backend/
+  app.py
+  api/
+    routes.py
+    handlers.py
+  services/
+    model_service.py
+    ocr_service.py
+    handwritten_ocr_service.py
+    printed_ocr_service.py
+  preprocessing/
+  postprocessing.py
+  dataset_loader.py
+  train_on_real_handwriting.py
+  validate_system.py
+  data/
+    labels.txt
+    full_dataset/
+      words_new.txt
+      iam_words/words/
+  models/
+    char_model.keras
 ```
 
-### Optional: Install Tesseract (fallback OCR)
+The larger handwriting CRNN model is currently stored at:
 
-- Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
-- Linux: `sudo apt install tesseract-ocr`
-- Mac: `brew install tesseract`
+```text
+../large_artifacts_backup/models/handwriting_model.keras
+```
 
-## 🚀 Running the Server
+`model_service.py` searches this backup path automatically. You can also set:
 
-```bash
-# Development mode
+```powershell
+$env:OCR_HANDWRITING_MODEL_PATH="C:\path\to\handwriting_model.keras"
+```
+
+## Setup
+
+Your existing `.venv` points to a Python install that is not available in this environment. Recreate it:
+
+```powershell
+cd C:\Users\Jake\OneDrive\Desktop\School_STI\ProgLang\handwritten_ocr_backend
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+```
+
+Python 3.11 is recommended for TensorFlow/EasyOCR compatibility.
+
+## Run Backend
+
+```powershell
+cd C:\Users\Jake\OneDrive\Desktop\School_STI\ProgLang\handwritten_ocr_backend
+.\.venv\Scripts\Activate.ps1
 python app.py
-
-# Production mode
-gunicorn -w 4 -b 0.0.0.0:5000 app:app
 ```
 
-Server will be available at `http://localhost:5000`
+Backend URL:
 
-## 📡 API Endpoints
-
-### Health Check
-
-```
-GET /api/health
+```text
+http://localhost:5000
 ```
 
-### Extract Text from Image
+## API
 
-```
-POST /api/ocr
-Content-Type: multipart/form-data
+### `GET /api/health`
 
-Parameters:
-- image: Image file
-- mode: "printed" | "handwritten" | "auto" (default: "auto")
-```
+Returns backend status, Keras model status, and dataset detection summary.
 
-### Handwritten Text Only
+### `GET /api/status`
 
-```
-POST /api/ocr/handwritten
-Content-Type: multipart/form-data
+Returns model loading status.
 
-Parameters:
-- image: Image file
-```
+### `POST /api/ocr`
 
-### Batch Processing
+Multipart fields:
 
-```
-POST /api/ocr/batch
-Content-Type: multipart/form-data
+- `image`: image file
+- `mode`: `printed` or `handwritten`
+- `format`: `lines` or `plain`
 
-Parameters:
-- images: Multiple image files
-```
+### `POST /api/ocr/printed`
 
-## 📝 Example Usage
+Forces printed OCR.
 
-### Python
+### `POST /api/ocr/handwritten`
 
-```python
-import requests
+Forces handwritten OCR. Keras CRNN is attempted before EasyOCR fallback.
 
-# Single image OCR
-with open('document.jpg', 'rb') as f:
-    response = requests.post(
-        'http://localhost:5000/api/ocr',
-        files={'image': f},
-        data={'mode': 'auto'}
-    )
-    print(response.json())
+Example:
+
+```powershell
+curl.exe -X POST http://localhost:5000/api/ocr/handwritten `
+  -F "image=@data\full_dataset\iam_words\words\b04\b04-208\b04-208-02-01.png" `
+  -F "format=lines"
 ```
 
-### JavaScript (Frontend)
+## Real Dataset
 
-```javascript
-const formData = new FormData();
-formData.append("image", imageFile);
-formData.append("mode", "handwritten");
+The real dataset is detected from:
 
-const response = await fetch("http://localhost:5000/api/ocr", {
-  method: "POST",
-  body: formData,
-});
-const result = await response.json();
-console.log(result.text);
+```text
+data/full_dataset/words_new.txt
+data/full_dataset/iam_words/words/
 ```
 
-### cURL
+The older `data/labels.txt` contains converted `word_00000.png` labels, but the matching flat `data/train` and `data/val` images are not present. The fixed loader therefore uses IAM metadata and nested image paths directly.
+
+## Train Keras CRNN
+
+Quick smoke test:
+
+```powershell
+python train_on_real_handwriting.py --dataset-path .\data --epochs 1 --batch-size 8 --max-samples 200
+```
+
+Full training:
+
+```powershell
+python train_on_real_handwriting.py --dataset-path .\data --epochs 100 --batch-size 16
+```
+
+## Fast GPU Training
+
+Use WSL2/Linux for modern TensorFlow GPU training. TensorFlow 2.10 was the last official native-Windows GPU build; TensorFlow 2.11+ uses WSL2 for NVIDIA CUDA GPU support.
+
+Inside WSL2:
+
+```powershell
+wsl.exe --install
+```
+
+Restart Windows if prompted, then open Ubuntu/WSL and run:
 
 ```bash
-curl -X POST http://localhost:5000/api/ocr \
-  -F "image=@handwritten_note.png" \
-  -F "mode=handwritten"
+cd /mnt/c/Users/Jake/OneDrive/Desktop/School_STI/ProgLang/handwritten_ocr_backend
+python3 -m venv .venv-wsl
+source .venv-wsl/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements-gpu-wsl.txt
+python validate_system.py --skip-http --require-gpu
+python train_on_real_handwriting.py --dataset-path ./data --epochs 100 --batch-size 8 --require-gpu --mixed-precision
 ```
 
-## 🏋️ Training Custom Handwriting Model
-
-### Using IAM Handwriting Database
-
-1. Download IAM dataset from https://fki.tic.heia-fr.ch/databases/iam-handwriting-database
-
-2. Extract to `data/iam/` folder
-
-3. Run training:
+Fast smoke test:
 
 ```bash
-python train_handwriting_model.py --data ./data/iam --epochs 50
+python train_on_real_handwriting.py --dataset-path ./data --epochs 1 --batch-size 8 --max-samples 256 --require-gpu --mixed-precision
 ```
 
-### Using Synthetic Data (Demo)
+GPU flags:
 
-```bash
-python train_handwriting_model.py --epochs 10
+- `--require-gpu`: stop immediately if TensorFlow cannot see the GPU.
+- `--mixed-precision`: use `mixed_float16` on GPU for faster training and lower memory use.
+- `--xla`: enable TensorFlow XLA JIT. Use this only on larger GPUs; it can exceed memory on 4 GB cards.
+
+Your Windows driver currently reports an NVIDIA GeForce GTX 1650 with 4 GB VRAM. Use `--batch-size 8` and omit `--xla` for full training.
+
+Resume:
+
+```powershell
+python train_on_real_handwriting.py --dataset-path .\data --resume --epochs 100 --batch-size 16
 ```
 
-## 🔧 Model Architecture (CRNN)
+Warm start from the backup model:
 
-```
-Input: (32, 128, 1) grayscale image
-    ↓
-Conv2D(32) → MaxPool → Conv2D(64) → MaxPool
-    ↓
-Conv2D(128) → BatchNorm → MaxPool → Conv2D(128) → BatchNorm → MaxPool
-    ↓
-Conv2D(256) → BatchNorm → Dropout
-    ↓
-Reshape for RNN
-    ↓
-Bidirectional LSTM(128) → Bidirectional LSTM(64)
-    ↓
-Dense(num_classes + 1) with softmax
-    ↓
-CTC Decoding → Output Text
+```powershell
+python train_on_real_handwriting.py --dataset-path .\data --epochs 50 --warm-start-model ..\large_artifacts_backup\models\handwriting_model.keras
 ```
 
-## 📁 Project Structure
+The best model is saved to:
 
-```
-backend/
-├── app.py                    # Flask API server
-├── ocr_engine.py             # OCR Engine with Keras models
-├── train_handwriting_model.py # Training script
-├── requirements.txt          # Python dependencies
-├── models/
-│   └── handwriting_model.keras  # Trained model (after training)
-└── data/
-    └── iam/                  # IAM dataset (optional)
+```text
+models/handwriting_model.keras
 ```
 
-## 🔍 Understanding Keras OCR
+## Validate
 
-### Why Keras for OCR?
+Dataset and local model only:
 
-1. **Deep Learning Power**: CNNs excel at extracting visual features from images
-2. **Sequence Modeling**: LSTMs handle variable-length text sequences
-3. **CTC Loss**: Allows training without character-level segmentation
-4. **Flexibility**: Easy to customize and fine-tune for specific use cases
+```powershell
+python validate_system.py --skip-http
+```
 
-### Key Concepts
+Full system after backend and frontend are running:
 
-- **CRAFT**: Detects text regions in images using CNN
-- **CRNN**: Combines CNN (feature extraction) + RNN (sequence modeling)
-- **CTC (Connectionist Temporal Classification)**: Loss function that handles alignment between input sequences and output labels
-- **Bidirectional LSTM**: Processes sequences in both directions for better context
+```powershell
+python validate_system.py
+```
 
-## 📚 References
+Specific OCR image:
 
-- [keras-ocr Documentation](https://keras-ocr.readthedocs.io/)
-- [CRNN Paper](https://arxiv.org/abs/1507.05717)
-- [CRAFT Paper](https://arxiv.org/abs/1904.01941)
-- [IAM Handwriting Database](https://fki.tic.heia-fr.ch/databases/iam-handwriting-database)
+```powershell
+python validate_system.py --image data\full_dataset\iam_words\words\b04\b04-208\b04-208-02-01.png
+```
 
-# handwritten_ocr_backend
+## Troubleshooting
+
+- `No installed Python found`: install Python 3.11 and recreate `.venv`.
+- `TensorFlow/Keras could not be imported`: activate `.venv`, then reinstall `requirements.txt`.
+- `TensorFlow GPU visible: FAIL`: use WSL2/Linux for TensorFlow 2.11+ GPU training, then run `nvidia-smi` and `python validate_system.py --skip-http --require-gpu`.
+- `handwriting_ready: false`: set `OCR_HANDWRITING_MODEL_PATH` or place `handwriting_model.keras` in `models/`.
+- `Dataset detected: 0`: check that `data/full_dataset/words_new.txt` and `data/full_dataset/iam_words/words/` exist.
+- EasyOCR first-run delay: EasyOCR may download its own model files the first time printed OCR or fallback OCR runs.

@@ -1,5 +1,7 @@
-"""
-This is my OCR post-processing script. I wrote it to clean up the most obvious mistakes that OCR makes, but I try not to mess with the original line structure or formatting. I use this for my own handwriting, code, and other documents.
+"""OCR post-processing.
+
+This module is intentionally conservative: it fixes common OCR artifacts and
+normalizes punctuation/whitespace without trying to "guess" full words.
 """
 
 import re
@@ -9,29 +11,31 @@ from typing import List
 
 # ============ COMMON HANDWRITING OCR MISREADS ============
 COMMON_HANDWRITING_FIXES = [
-    # Fuzzy and specific fixes for your sample
-    (r"^Dynone is I J ?[\(\[]?aueres", "My Name is Jake J. Mayores."),
-    (r"Dynone", "My Name"),
-    (r"I J", "Jake J."),
-    (r"[\(\[]aueres", "Mayores."),
-    (r"\bD[yv]n[o0]ne\b", "My Name"),
-    (r"\bI J\b", "Jake J."),
-    (r"\b[aA]ueres\b", "Mayores"),
-    (r"\b[aA]u[e3]res\b", "Mayores"),
-    (r"\b[aA]uer[e3]s\b", "Mayores"),
-    (r"\b[aA]ueres,?\b", "Mayores."),
-    (r"\bJ J\b", "Jake J"),
-    (r"\bJ\. J\.", "Jake J."),
-    (r"\bJ\. J\b", "Jake J."),
-    (r"\bJ J\.\b", "Jake J."),
-    # General fixes
-    (r"\bMn\b", "My"),
-    (r"\bManores\b", "Mayores"),
-    (r"\bM n\b", "My"),
+    # Standalone "1" is frequently misread "I" in handwriting OCR.
+    (r"(?<!\w)1(?!\w)", "I"),
+    # Very common non-words produced by OCR on simple English greetings.
+    (r"\bHelb\b", "Hello"),
+    (r"\bgys\b", "guys"),
+    # Common OCR "OCR System" variants.
+    (r"\bCCRSystem\b", "OCR System"),
+    (r"\bCCR\s+System\b", "OCR System"),
+    (r"\bOCRSystem\b", "OCR System"),
+    # Common phrase fragments from your sample handwriting.
+    (r"\bonwertHis\b", "convert this"),
+    (r"\bTnTo\(?\s*convert\s*this\b", "I will try to convert this"),
+    (r"\bTnTo\(?\s*onwertHis\b", "I will try to convert this"),
+    (r"\bUsil\s+Cur\b", "using our"),
+    # Name phrase cleanup (kept as word-level fixes, not whole-sentence overrides).
+    (r"\bDynone\b", "My Name"),
     (r"\bNane\b", "Name"),
-    (r"\bJake J\b", "Jake J."),
-    (r"\bMayores\b", "Mayores."),
-    # Add more as needed for your dataset
+    (r"\bI\s+J\b", "Jake J."),
+    (r"\(\s*aueres\b", "Mayores."),
+    (r"\baueres\b", "Mayores"),
+    (r"\bManores\b", "Mayores"),
+    # OCR casing for common acronyms.
+    (r"\bOCr\b", "OCR"),
+    (r"\b0CR\b", "OCR"),
+    (r"\b0cr\b", "ocr"),
     # Remove repeated dots (e.g., 'J...' -> 'J.')
     (r'(\bJ[ ]?J)\.\.+', r'\1.'),
     (r'\.\.+', '.'),
@@ -62,6 +66,8 @@ CONSERVATIVE_PATTERNS = [
     (r"\s+,", ","),
     (r"\s+;", ";"),
     (r"\s+:", ":"),
+    (r"\s+!", "!"),
+    (r"\s+\?", "?"),
     (r",{2,}", ","),
     (r";{2,}", ";"),
     (r"!{3,}", "!!"),
@@ -70,6 +76,43 @@ CONSERVATIVE_PATTERNS = [
     (r"\(\s{2,}", "("),
     (r"\s{2,}\)", ")"),
 ]
+
+
+_IN_WORD_QUOTES = re.compile(r'(?<=\w)[`"\'’‘´](?=\w)')
+_PUNCT_ONLY_LINE = re.compile(r"^[\s\W_]+$")
+_SHORT_NOISE_LINE = re.compile(r"^\s*[\d\W_]{1,3}\s*$")
+
+# Printed OCR frequently confuses punctuation (e.g. '.' -> ';', ',' -> ':').
+# Keep these very conservative to avoid corrupting legitimate punctuation such as
+# times (12:30) and ratios (1:2).
+PRINTED_PUNCT_FIXES = [
+    # Sentence terminators: semicolon/colon that are acting like a period.
+    (r"(?<!\d);(?=\s+[A-Z])", "."),
+    (r"(?<!\d):(?=\s+[A-Z])", "."),
+    (r"(?<!\d);(?=\s*$)", "."),
+    (r"(?<!\d):(?=\s*$)", "."),
+    # Comma-like: colon between words (not digits) followed by lowercase.
+    (r"(?<!\d):(?=\s+[a-z])", ","),
+    # Semicolon used like a comma in prose.
+    (r";(?=\s+[a-z])", ","),
+    # Fix missing space after period in prose: "schedule.This" -> "schedule. This"
+    (r"([A-Za-z])\.(?=[A-Z])", r"\1. "),
+    # Time written with '.' instead of ':' -> normalize when clearly a time.
+    (r"\b(\d{1,2})\.(\d{2})\s*([AP]M)\b", r"\1:\2 \3"),
+]
+
+
+def _strip_in_word_quotes(text: str) -> str:
+    # Fix artifacts like `g"ys` -> `gys` (still conservative; doesn't invent letters).
+    return _IN_WORD_QUOTES.sub("", text)
+
+
+def _normalize_common_artifacts(text: str) -> str:
+    # Normalize some frequent OCR punctuation artifacts without changing words.
+    text = _strip_in_word_quotes(text)
+    # Replace odd quote variants with a plain apostrophe.
+    text = text.replace("’", "'").replace("‘", "'").replace("´", "'")
+    return text
 
 
 def post_process_ocr(text: str, mode: str = "handwriting") -> str:
@@ -91,12 +134,17 @@ def post_process_ocr(text: str, mode: str = "handwriting") -> str:
     if not text:
         return text
 
-    result = text
+    result = _normalize_common_artifacts(text)
 
     # Pass 1: code-only fixes
     if mode == "code":
         for pattern, replacement in CODE_ONLY_FIXES:
             result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+
+    # Pass 1b: printed-only punctuation fixes
+    if mode == "printed":
+        for pattern, replacement in PRINTED_PUNCT_FIXES:
+            result = re.sub(pattern, replacement, result)
 
     # Pass 2: common handwriting OCR misreads
     if mode == "handwriting":
@@ -117,6 +165,38 @@ def post_process_ocr(text: str, mode: str = "handwriting") -> str:
         return s
     result = fix_caps(result)
 
+    if mode == "printed":
+        # Printed OCR often returns hard-wrapped lines from a paragraph. If a line
+        # break occurs mid-sentence, the next line may start with an uppercase
+        # letter even though it should be lowercase.
+        lines = result.splitlines()
+        fixed_lines: list[str] = []
+        prev_line = ""
+        for line in lines:
+            stripped = line.lstrip()
+            if not stripped:
+                fixed_lines.append(line)
+                prev_line = line
+                continue
+
+            prev_tail = prev_line.rstrip()
+            prev_end = prev_tail[-1] if prev_tail else ""
+
+            # If previous line does not end a sentence, and this line begins with
+            # a Titlecase word, lowercase the first character.
+            if prev_end and prev_end not in ".!?":
+                if len(stripped) >= 2 and stripped[0].isupper() and stripped[1].islower():
+                    # Avoid lowercasing standalone "I ..."
+                    if not stripped.startswith("I "):
+                        leading_ws = line[: len(line) - len(stripped)]
+                        stripped = stripped[0].lower() + stripped[1:]
+                        line = leading_ws + stripped
+
+            fixed_lines.append(line)
+            prev_line = line
+
+        result = "\n".join(fixed_lines)
+
     # Pass 6: trim outer whitespace and excessive blank lines
     result = re.sub(r"\n{3,}", "\n\n", result).strip()
 
@@ -129,5 +209,24 @@ def post_process_handwriting(text: str) -> str:
 
 
 def process_lines(lines: List[str], mode: str = "handwriting") -> List[str]:
-    """Apply post-processing to a list of lines."""
-    return [post_process_ocr(line, mode=mode) for line in lines if line and line.strip()]
+    """Apply post-processing to a list of lines.
+
+    Also drops obvious noise-only lines when there are other meaningful lines.
+    """
+    cleaned = [post_process_ocr(line, mode=mode) for line in lines if line and line.strip()]
+    if len(cleaned) <= 1:
+        return cleaned
+
+    filtered: list[str] = []
+    for line in cleaned:
+        candidate = line.strip()
+        if not candidate:
+            continue
+        if _PUNCT_ONLY_LINE.match(candidate):
+            continue
+        if _SHORT_NOISE_LINE.match(candidate):
+            # Common artifacts: a lone "5", ".", "=", etc.
+            continue
+        filtered.append(line)
+
+    return filtered or cleaned

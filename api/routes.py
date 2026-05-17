@@ -1,10 +1,13 @@
 """API Routes"""
 
 import logging
+from pathlib import Path
 from flask import Blueprint, jsonify, request
+from dataset_loader import get_dataset_summary
 from .handlers import handle_ocr_request
 
 logger = logging.getLogger(__name__)
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 def create_api_blueprint(ocr_service):
@@ -25,10 +28,16 @@ def create_api_blueprint(ocr_service):
     @api.route('/health', methods=['GET'])
     def health():
         """Health check endpoint"""
+        model_status = ocr_service.model_service.get_status()
+        dataset_summary = get_dataset_summary(BACKEND_ROOT / 'data')
+        ready = bool(model_status.get('handwriting_ready')) and dataset_summary.get('total_samples', 0) > 0
+
         return jsonify({
-            'status': 'healthy',
+            'status': 'ready' if ready else 'degraded',
             'service': 'OCR API',
-            'version': '2.0'
+            'version': '2.0',
+            'models': model_status,
+            'dataset': dataset_summary,
         })
     
     @api.route('/status', methods=['GET'])
@@ -36,7 +45,7 @@ def create_api_blueprint(ocr_service):
         """Get system status"""
         try:
             status_info = ocr_service.model_service.get_status()
-            is_healthy = status_info.get('keras_ready', False)
+            is_healthy = status_info.get('handwriting_ready', False)
             
             return jsonify({
                 'status': 'ready' if is_healthy else 'degraded',
@@ -101,11 +110,7 @@ def create_api_blueprint(ocr_service):
             return '', 204
         
         try:
-            # Force printed mode
-            original_form = dict(request.form)
-            request.form = {**original_form, 'mode': 'printed'}
-            
-            result = handle_ocr_request(ocr_service)
+            result = handle_ocr_request(ocr_service, forced_mode='printed')
             
             status_code = 200 if result.get('success') else 400
             return jsonify(result), status_code
@@ -131,11 +136,7 @@ def create_api_blueprint(ocr_service):
             return '', 204
         
         try:
-            # Force handwritten mode
-            original_form = dict(request.form)
-            request.form = {**original_form, 'mode': 'handwritten'}
-            
-            result = handle_ocr_request(ocr_service)
+            result = handle_ocr_request(ocr_service, forced_mode='handwritten')
             
             status_code = 200 if result.get('success') else 400
             return jsonify(result), status_code

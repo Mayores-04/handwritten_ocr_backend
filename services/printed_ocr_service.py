@@ -5,6 +5,7 @@ from typing import Any, List
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 from preprocessing.image_processors import preprocess_image
+from postprocessing import post_process_ocr
 
 logger = logging.getLogger(__name__)
 
@@ -211,12 +212,21 @@ class PrintedOCRService:
 
             text_lines = [self._compose_line_text(group) for group in line_groups]
             text_lines = [line for line in text_lines if line]
+
+            # Post-process each visual line so the UI shows corrected punctuation
+            try:
+                processed_lines = [post_process_ocr(line, mode='printed') for line in text_lines]
+            except Exception:
+                processed_lines = text_lines
+            text_lines = processed_lines
             all_confs = [d['conf'] for d in normalized_detections]
 
             if not text_lines:
                 return {'success': False, 'error': 'No text detected after filtering', 'text': ''}
 
             final_text = '\n'.join(text_lines)
+            # Ensure full-text post-processing as well (safety net)
+            final_text = post_process_ocr(final_text, mode='printed')
             plain_text = ' '.join(text_lines)
             avg_confidence = float(np.mean(all_confs)) if all_confs else 0.0
             visual_line_count = len(text_lines)

@@ -1,0 +1,4 @@
+# Install this inside WSL2/Linux for NVIDIA GPU training.
+# TensorFlow's current CUDA-enabled pip extra is not for native Windows GPU.
+-r requirements.txt
+tensorflow[and-cuda]>=2.16,<3

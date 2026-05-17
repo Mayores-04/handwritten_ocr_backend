@@ -10,10 +10,9 @@ IMAGE_CONFIG: dict[str, Any] = {
     'upscale_threshold': 1500,
 }
 
-# Character classes for character model
-# MUST match the training data structure in train_on_real_emnist.py
-# Model trained on EMNIST byclass: 0-9 (digits) + A-Z (uppercase letters) = 36 classes
-CHAR_CLASSES = list('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+# Character classes for models/char_model.keras.
+# The saved model has 62 output units: digits + uppercase + lowercase.
+CHAR_CLASSES = list('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz')
 
 # Model paths
 MODEL_PATHS = {

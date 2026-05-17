@@ -1,24 +1,26 @@
 """
 Train CRNN model with proper CTC loss for full-document handwriting OCR
 
-This trains per-LINE recognition (not full pages). Each line image is segmented 
-from the document and trained with real CTC loss for variable-length sequences.
+This trains word/line recognition (not full pages). The current project dataset
+is IAM word-level data, and the OCR service segments uploaded handwriting into
+word-like crops before CRNN inference.
 
 Supports:
 - IAM Handwriting Database (lines) - recommended: http://www.fki.inf.unibe.ch/databases/iam-handwriting-database
 - HWDB - Chinese Handwriting Database
 - Custom labeled line images
 
-Dataset structure:
+Supported dataset structures:
     data/
-      train/
-        line_001.png
-        line_002.png
-        ...
-      val/
-        line_100.png
-        ...
-      labels.txt    (format: filename,transcription)
+      full_dataset/
+        words_new.txt
+        iam_words/words/<group>/<form>/<word-id>.png
+
+or populated flat folders:
+
+    data/train/*.png
+    data/val/*.png
+    data/labels.txt    (format: filename,transcription)
 
 Installation:
     pip install tensorflow keras pillow opencv-python numpy editdistance
@@ -28,18 +30,19 @@ Usage:
     python train_on_real_handwriting.py --guide
 
     # Train on your dataset
-    python train_on_real_handwriting.py --dataset-path ./data --epochs 100 --batch-size 32
+    python train_on_real_handwriting.py --dataset-path ./data --epochs 100 --batch-size 16
 """
 
-import os
 import json
 import sys
 import argparse
 import logging
 from pathlib import Path
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Optional
 import numpy as np
 import cv2
+from dataset_loader import DatasetSample, discover_labeled_image_samples
+from gpu_utils import configure_tensorflow_runtime
 try:
     from keras.saving import register_keras_serializable
 except ImportError:
@@ -85,7 +88,7 @@ class CharacterSet:
             if char in self.char_to_idx:
                 encoded.append(self.char_to_idx[char])
             else:
-                # Unknown character → space
+                # Unknown character -> space
                 encoded.append(self.char_to_idx[' '])
         return np.array(encoded, dtype=np.int32)
     
@@ -109,112 +112,72 @@ class CharacterSet:
 # ==================== Dataset Loading ====================
 
 class HandwritingLineDataset:
-    """Load handwritten line images with text transcriptions"""
+    """Load real handwritten word/line images with text transcriptions."""
     
-    def __init__(self, dataset_path: str, test_size: float = 0.2):
+    def __init__(
+        self,
+        dataset_path: str,
+        test_size: float = 0.2,
+        seed: int = 1337,
+        max_samples: Optional[int] = None,
+    ):
         self.dataset_path = Path(dataset_path)
         self.test_size = test_size
+        self.seed = seed
+        self.max_samples = max_samples
         self.charset = CharacterSet()
         
-        self.train_images = []
+        self.train_samples: list[DatasetSample] = []
+        self.val_samples: list[DatasetSample] = []
         self.train_texts = []
-        self.val_images = []
         self.val_texts = []
+        self.discovery_summary = {}
+        self.bad_images: set[Path] = set()
+        self._bad_image_warnings = 0
+        self._max_bad_image_warnings = 20
         
     def load_dataset(self) -> bool:
-        """Load images and labels from directory"""
+        """Discover the real dataset and keep image paths for lazy batch loading."""
         logger.info(f"Loading dataset from {self.dataset_path}")
-        
-        labels_file = self.dataset_path / "labels.txt"
-        if not labels_file.exists():
-            logger.error(f"labels.txt not found at {labels_file}")
-            logger.error("Expected format: filename.png,transcription text")
+
+        discovery = discover_labeled_image_samples(
+            dataset_path=self.dataset_path,
+            test_size=self.test_size,
+            seed=self.seed,
+            max_samples=self.max_samples,
+        )
+        self.discovery_summary = discovery.to_dict(preview_count=5)
+
+        for warning in discovery.warnings:
+            logger.warning(warning)
+
+        if discovery.total_samples == 0:
+            logger.error("No usable labeled images found in the dataset.")
+            logger.error("Expected either populated data/train + data/val folders or IAM files at:")
+            logger.error("  data/full_dataset/words_new.txt")
+            logger.error("  data/full_dataset/iam_words/words/")
             return False
-        
-        # Read labels
-        label_dict = {}
-        with open(labels_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip() and not line.startswith('#'):
-                    parts = line.strip().split(',', 1)
-                    if len(parts) == 2:
-                        filename = parts[0].strip()
-                        text = parts[1].strip()
-                        label_dict[filename] = text
-        
-        logger.info(f"Found {len(label_dict)} labeled samples")
-        
-        # Load images from train and val directories
-        all_samples = []
-        unreadable_files = []
-        progress_log_every = 2000
-        
-        for data_dir in [self.dataset_path / "train", self.dataset_path / "val"]:
-            if not data_dir.exists():
-                logger.warning(f"Directory not found: {data_dir}")
-                continue
 
-            image_paths = sorted(data_dir.glob("*.png")) + sorted(data_dir.glob("*.jpg"))
-            logger.info(f"Scanning {len(image_paths)} images in {data_dir}")
+        self.train_samples = discovery.train_samples
+        self.val_samples = discovery.val_samples
+        self.train_texts = [sample.text for sample in self.train_samples]
+        self.val_texts = [sample.text for sample in self.val_samples]
 
-            for img_idx, img_path in enumerate(image_paths, start=1):
-                filename = img_path.name
-                base_name = img_path.stem
-                
-                # Try to find label
-                text = label_dict.get(filename) or label_dict.get(base_name)
-                if not text:
-                    logger.warning(f"No label for {filename}")
-                    continue
-                
-                # Load image
-                try:
-                    # Skip placeholders/corrupted files quickly before decode.
-                    if img_path.stat().st_size == 0:
-                        unreadable_files.append(str(img_path))
-                        logger.warning(f"Skipped zero-byte image: {img_path}")
-                        continue
+        logger.info("Dataset source: %s", discovery.source)
+        logger.info("Labels file: %s", discovery.labels_path)
+        logger.info("Images root: %s", discovery.images_root)
+        logger.info(
+            "Samples: %d matched, %d missing images, %d skipped metadata rows",
+            discovery.matched_count,
+            discovery.missing_count,
+            discovery.skipped_count,
+        )
+        logger.info(f"Train: {len(self.train_samples)}, Val: {len(self.val_samples)}")
 
-                    img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
-                    if img is None:
-                        unreadable_files.append(str(img_path))
-                        logger.warning(f"Skipped unreadable image: {img_path}")
-                        continue
-                    
-                    all_samples.append((img, text))
-                except Exception as e:
-                    unreadable_files.append(str(img_path))
-                    logger.warning(f"Skipped image with error {img_path}: {e}")
+        preview = (self.train_samples + self.val_samples)[:5]
+        for sample in preview:
+            logger.info("Sample: %s -> %s", sample.source_id, sample.text)
 
-                if img_idx % progress_log_every == 0:
-                    logger.info(
-                        f"Load progress [{data_dir.name}] {img_idx}/{len(image_paths)} files | "
-                        f"usable: {len(all_samples)} | skipped: {len(unreadable_files)}"
-                    )
-        
-        if not all_samples:
-            logger.error("No images loaded from dataset!")
-            return False
-        
-        logger.info(f"Loaded {len(all_samples)} image-text pairs")
-        if unreadable_files:
-            logger.warning(f"Skipped {len(unreadable_files)} unreadable images during load")
-            preview = unreadable_files[:5]
-            for bad_path in preview:
-                logger.warning(f"  - {bad_path}")
-            if len(unreadable_files) > len(preview):
-                logger.warning(f"  ... and {len(unreadable_files) - len(preview)} more")
-        
-        # Split into train/val
-        np.random.shuffle(all_samples)
-        split_idx = int(len(all_samples) * (1 - self.test_size))
-        
-        self.train_images = [x[0] for x in all_samples[:split_idx]]
-        self.train_texts = [x[1] for x in all_samples[:split_idx]]
-        self.val_images = [x[0] for x in all_samples[split_idx:]]
-        self.val_texts = [x[1] for x in all_samples[split_idx:]]
-        
-        logger.info(f"Train: {len(self.train_images)}, Val: {len(self.val_images)}")
         return True
     
     def preprocess_image(self, img: np.ndarray, target_height: int = 32) -> np.ndarray:
@@ -236,8 +199,7 @@ class HandwritingLineDataset:
     
     def get_batch(self, indices: List[int], use_train: bool = True) -> Tuple:
         """Get a batch of images and corresponding text"""
-        images = self.train_images if use_train else self.val_images
-        texts = self.train_texts if use_train else self.val_texts
+        samples = self.train_samples if use_train else self.val_samples
         
         batch_images = []
         batch_texts = []
@@ -247,14 +209,41 @@ class HandwritingLineDataset:
         max_width = 512  # Maximum image width
         target_height = 32
         cnn_downsample_factor = 16  # width: /2 /2 /2 /2 across pooling blocks
+
+        def read_image(sample: DatasetSample) -> Optional[np.ndarray]:
+            if sample.image_path in self.bad_images:
+                return None
+
+            img = cv2.imread(str(sample.image_path), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                self.bad_images.add(sample.image_path)
+                if self._bad_image_warnings < self._max_bad_image_warnings:
+                    logger.warning("Skipping unreadable image: %s", sample.image_path)
+                    self._bad_image_warnings += 1
+                    if self._bad_image_warnings == self._max_bad_image_warnings:
+                        logger.warning("Further unreadable image warnings will be suppressed.")
+                return None
+
+            return img
         
         for idx in indices:
+            sample = samples[idx]
+            img_raw = read_image(sample)
+
+            resample_attempts = 0
+            while img_raw is None and resample_attempts < 3 and samples:
+                resample_attempts += 1
+                sample = samples[int(np.random.randint(0, len(samples)))]
+                img_raw = read_image(sample)
+
+            if img_raw is None:
+                continue
+
             # Preprocess image
-            img = self.preprocess_image(images[idx], target_height)
+            img = self.preprocess_image(img_raw, target_height)
             
             # Truncate/pad to max width
             h, w = img.shape  
-            effective_w = min(w, max_width)
             if w > max_width:
                 img = img[:, :max_width]
             else:
@@ -266,15 +255,19 @@ class HandwritingLineDataset:
             batch_images.append(img)
             
             # Encode text
-            text = texts[idx]
-            encoded = self.charset.encode_text(text)
+            encoded = self.charset.encode_text(sample.text)
             batch_texts.append(encoded)
             batch_text_lengths.append(len(encoded))
             
-            # Input length after CNN pooling along width.
-            input_len = max(1, effective_w // cnn_downsample_factor)
+            # Images are padded to max_width, so the model emits max_width/16
+            # CTC timesteps. Passing the shorter visual width can make labels
+            # longer than the input sequence and break real IAM word samples.
+            input_len = max(1, max_width // cnn_downsample_factor)
             batch_input_lengths.append(input_len)
         
+        if not batch_images:
+            raise ValueError("No readable images found in the batch. Check dataset file integrity.")
+
         # Convert to numpy arrays with proper shapes
         batch_images = np.array(batch_images)[..., np.newaxis]  # Add channel dim
          
@@ -347,30 +340,44 @@ def build_crnn_model(charset: CharacterSet, img_height: int = 32) -> keras.Model
 @register_keras_serializable()
 def ctc_loss_fn(y_true, y_pred):
     """
-    TensorFlow CTC Loss function for variable-length sequences.
+    Keras CTC loss for variable-length sequences.
     
     Args:
         y_true: Tuple of (text_indices, text_lengths, input_lengths)
-        y_pred: Model predictions (batch, time_steps, num_classes)
+        y_pred: Softmax model predictions (batch, time_steps, num_classes)
     """
     text_indices, text_lengths, input_lengths = y_true
-    
-    # Reshape to ensure proper 1D arrays
-    text_lengths = tf.reshape(text_lengths, [-1])
-    input_lengths = tf.reshape(input_lengths, [-1])
-    
-    # Use TensorFlow's native CTC loss
-    # logits_time_major=False means (batch, time, classes)
-    loss = tf.nn.ctc_loss(
-        text_indices,
-        y_pred,
-        label_length=text_lengths,
-        logit_length=input_lengths,
-        logits_time_major=False,
-        blank_index=-1
+    y_pred = tf.cast(y_pred, tf.float32)
+    labels = tf.cast(text_indices, tf.int32)
+    label_lengths = tf.cast(tf.reshape(text_lengths, [-1]), tf.int32)
+    logit_lengths = tf.cast(tf.reshape(input_lengths, [-1]), tf.int32)
+
+    batch_size = tf.shape(labels)[0]
+    max_label_length = tf.shape(labels)[1]
+    mask = tf.sequence_mask(label_lengths, maxlen=max_label_length)
+    sparse_indices = tf.where(mask)
+    sparse_values = tf.gather_nd(labels, sparse_indices)
+    sparse_labels = tf.SparseTensor(
+        indices=tf.cast(sparse_indices, tf.int64),
+        values=sparse_values,
+        dense_shape=tf.cast([batch_size, max_label_length], tf.int64),
     )
-    
-    return loss
+
+    # The model outputs softmax probabilities for inference. log(probabilities)
+    # works as CTC logits because log_softmax(log(probabilities)) is equivalent.
+    logits = tf.math.log(tf.clip_by_value(y_pred, 1e-7, 1.0))
+    num_classes = y_pred.shape[-1]
+    if num_classes is None:
+        raise ValueError("CTC loss requires a statically known number of output classes.")
+
+    return tf.nn.ctc_loss(
+        labels=sparse_labels,
+        logits=logits,
+        label_length=label_lengths,
+        logit_length=logit_lengths,
+        logits_time_major=False,
+        blank_index=int(num_classes) - 1,
+    )
 
 
 class CTCCallback(keras.callbacks.Callback):
@@ -383,12 +390,12 @@ class CTCCallback(keras.callbacks.Callback):
     
     def on_epoch_end(self, epoch, logs=None):
         """Sample validation predictions every 10 epochs"""
-        if epoch % 10 == 0 and epoch > 0:
+        if epoch % 10 == 0 and epoch > 0 and self.dataset.val_samples:
             logger.info(f"\n[Epoch {epoch}] Sample predictions:")
             
             # Sample a few validation images
-            val_indices = np.random.choice(len(self.dataset.val_images), 
-                                          min(3, len(self.dataset.val_images)), 
+            val_indices = np.random.choice(len(self.dataset.val_samples), 
+                                          min(3, len(self.dataset.val_samples)), 
                                           replace=False)
             (val_images, val_texts), (val_text_lens, val_input_lens) = \
                 self.dataset.get_batch(val_indices.tolist(), use_train=False)
@@ -408,21 +415,44 @@ def train_crnn_model(
     dataset_path: str,
     output_model_path: str = "models/handwriting_model.keras",
     epochs: int = 100,
-    batch_size: int = 32,
+    batch_size: int = 16,
     log_batch_every: int = 200,
     checkpoint_dir: str = "checkpoints/handwriting_crnn",
     resume: bool = False,
-    warm_start_model: Optional[str] = None
+    warm_start_model: Optional[str] = None,
+    test_size: float = 0.2,
+    seed: int = 1337,
+    max_samples: Optional[int] = None,
+    require_gpu: bool = False,
+    mixed_precision: bool = False,
+    xla: bool = False,
 ) -> bool:
     """Train CRNN model with real CTC loss on handwriting dataset"""
     
     logger.info("="*70)
     logger.info("CRNN Training with CTC Loss for Handwriting Recognition")
     logger.info("="*70)
+
+    try:
+        runtime_info = configure_tensorflow_runtime(
+            tf,
+            require_gpu=require_gpu,
+            enable_mixed_precision=mixed_precision,
+            enable_xla=xla,
+        )
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        return False
+    logger.info("Runtime: %s", json.dumps(runtime_info.to_dict(), indent=2))
     
     # ===== Load Dataset =====
     logger.info("\n[Step 1/4] Loading dataset...")
-    dataset = HandwritingLineDataset(dataset_path)
+    dataset = HandwritingLineDataset(
+        dataset_path,
+        test_size=test_size,
+        seed=seed,
+        max_samples=max_samples,
+    )
     if not dataset.load_dataset():
         return False
     
@@ -430,6 +460,7 @@ def train_crnn_model(
     logger.info("\n[Step 2/4] Building CRNN model...")
     charset = dataset.charset
     model = build_crnn_model(charset)
+    Path(output_model_path).parent.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"Model architecture:")
     logger.info(f"  Input: (batch, 32, variable_width, 1)")
@@ -503,7 +534,7 @@ def train_crnn_model(
     logger.info(f"\n[Step 4/4] Training for {epochs} epochs (batch_size={batch_size})...")
     logger.info("Using real CTC loss with proper sequence alignment")
     
-    num_batches = len(dataset.train_images) // batch_size
+    num_batches = max(1, (len(dataset.train_samples) + batch_size - 1) // batch_size)
     
     best_loss = float('inf')
     patience_counter = 0
@@ -546,6 +577,34 @@ def train_crnn_model(
         )
         return True
 
+    @tf.function(reduce_retracing=True)
+    def train_step(batch_images, batch_texts, batch_text_lens, batch_input_lens):
+        with tf.GradientTape() as tape:
+            predictions = model(batch_images, training=True)
+            loss = ctc_loss_fn(
+                (batch_texts, batch_text_lens, batch_input_lens),
+                predictions,
+            )
+            mean_loss = tf.reduce_mean(loss)
+
+        gradients = tape.gradient(mean_loss, model.trainable_weights)
+        grads_and_vars = [
+            (grad, var)
+            for grad, var in zip(gradients, model.trainable_weights)
+            if grad is not None
+        ]
+        model.optimizer.apply_gradients(grads_and_vars)
+        return mean_loss
+
+    @tf.function(reduce_retracing=True)
+    def validation_step(val_images, val_texts, val_text_lens, val_input_lens):
+        predictions = model(val_images, training=False)
+        loss = ctc_loss_fn(
+            (val_texts, val_text_lens, val_input_lens),
+            predictions,
+        )
+        return tf.reduce_mean(loss)
+
     def save_training_state(next_epoch: int, best: float, patience_count: int) -> None:
         state_payload = {
             "next_epoch": int(next_epoch),
@@ -564,7 +623,7 @@ def train_crnn_model(
             num_batches_actual = 0
 
             # Shuffle training data
-            train_indices = np.random.permutation(len(dataset.train_images))
+            train_indices = np.random.permutation(len(dataset.train_samples))
 
             # Mini-batch training
             for batch_start in range(0, len(train_indices), batch_size):
@@ -572,19 +631,14 @@ def train_crnn_model(
                 (batch_images, batch_texts), (batch_text_lens, batch_input_lens) = \
                     dataset.get_batch(batch_indices.tolist(), use_train=True)
 
-                # Custom training loop for CTC
-                with tf.GradientTape() as tape:
-                    predictions = model(batch_images, training=True)
-                    loss = ctc_loss_fn(
-                        (batch_texts, batch_text_lens, batch_input_lens),
-                        predictions
-                    )
+                loss = train_step(
+                    batch_images,
+                    batch_texts,
+                    batch_text_lens,
+                    batch_input_lens,
+                )
 
-                # Backward pass
-                gradients = tape.gradient(loss, model.trainable_weights)
-                model.optimizer.apply_gradients(zip(gradients, model.trainable_weights))
-
-                epoch_loss += tf.reduce_mean(loss).numpy()
+                epoch_loss += float(loss.numpy())
                 num_batches_actual += 1
 
                 if log_batch_every > 0 and (num_batches_actual % log_batch_every == 0):
@@ -593,24 +647,25 @@ def train_crnn_model(
                         f"Avg train loss so far: {epoch_loss / max(num_batches_actual, 1):.4f}"
                     )
 
-            epoch_loss /= num_batches_actual
+            epoch_loss /= max(num_batches_actual, 1)
 
             # Validation
             val_loss = 0
             val_num_batches = 0
-            val_indices = np.arange(len(dataset.val_images))
+            val_indices = np.arange(len(dataset.val_samples))
 
             for batch_start in range(0, len(val_indices), batch_size):
                 batch_indices = val_indices[batch_start:batch_start + batch_size]
                 (val_images, val_texts), (val_text_lens, val_input_lens) = \
                     dataset.get_batch(batch_indices.tolist(), use_train=False)
 
-                predictions = model(val_images, training=False)
-                loss = ctc_loss_fn(
-                    (val_texts, val_text_lens, val_input_lens),
-                    predictions
+                loss = validation_step(
+                    val_images,
+                    val_texts,
+                    val_text_lens,
+                    val_input_lens,
                 )
-                val_loss += tf.reduce_mean(loss).numpy()
+                val_loss += float(loss.numpy())
                 val_num_batches += 1
 
             val_loss /= max(val_num_batches, 1)
@@ -623,7 +678,7 @@ def train_crnn_model(
                 best_loss = val_loss
                 patience_counter = 0
                 # Save best model
-                logger.info(f"  → New best model (val_loss: {val_loss:.4f})")
+                logger.info(f"  -> New best model (val_loss: {val_loss:.4f})")
                 model.save(output_model_path)
             else:
                 patience_counter += 1
@@ -658,8 +713,8 @@ def train_crnn_model(
         )
         return False
     
-    logger.info(f"\n✓ Training complete!")
-    logger.info(f"✓ Best model saved to: {output_model_path}")
+    logger.info("\nTraining complete!")
+    logger.info(f"Best model saved to: {output_model_path}")
     
     return True
 
@@ -673,25 +728,41 @@ def print_dataset_guide():
 HANDWRITING OCR DATASET PREPARATION GUIDE
 ================================================================================
 
-For FULL DOCUMENT OCR, you need:
-1. Line-level image images (handwritten text lines, not full pages)
-2. Text transcriptions for each line
+For FULL DOCUMENT OCR, this project trains on word/line crops, then the API
+segments uploaded handwriting before CRNN inference.
+
+The current project already includes IAM word-level data at:
+    data/full_dataset/words_new.txt
+    data/full_dataset/iam_words/words/
+
+You need:
+1. Word-level or line-level handwritten image crops
+2. Text transcriptions for each crop
 3. Proper CTC training with this script
 
 EXPECTED DIRECTORY STRUCTURE:
 =============================
 
+Preferred current project structure:
+
     data/
-    ├── train/
-    │   ├── line_001.png       (32px tall, variable width)
-    │   ├── line_002.png
-    │   ├── line_003.png
-    │   └── ...more lines...
-    ├── val/
-    │   ├── line_500.png
-    │   ├── line_501.png
-    │   └── ...more lines...
-    └── labels.txt             (transcriptions matching filenames)
+      full_dataset/
+        words_new.txt
+        iam_words/words/<group>/<form>/<word-id>.png
+
+Also supported:
+
+    data/
+    train/
+      line_001.png       (32px tall, variable width)
+      line_002.png
+      line_003.png
+      ...more crops...
+    val/
+      line_500.png
+      line_501.png
+      ...more crops...
+    labels.txt             (transcriptions matching filenames)
 
 LABELS.TXT FORMAT:
 ==================
@@ -823,7 +894,7 @@ TIPS FOR BEST ACCURACY:
 
 3. Training Hyperparameters
    - Default learning_rate=0.001 works well
-   - batch_size=32 is good; reduce if memory issues
+   - batch_size=16 is a safer default for 4 GB GPUs; use 8 if memory is tight
    - 100 epochs is typical; use early stopping
 
 4. For Production Deployment
@@ -880,8 +951,8 @@ Examples:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=32,
-        help="Training batch size (default: 32)"
+        default=16,
+        help="Training batch size (default: 16; use 8 for low VRAM, 32+ for larger GPUs)"
     )
     parser.add_argument(
         "--log-batch-every",
@@ -905,6 +976,39 @@ Examples:
         help="Path to an existing .keras model to copy matching layer weights from when starting a new run"
     )
     parser.add_argument(
+        "--test-size",
+        type=float,
+        default=0.2,
+        help="Validation split for discovered IAM samples (default: 0.2)"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=1337,
+        help="Random seed for deterministic train/validation split (default: 1337)"
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Optional cap for quick training smoke tests"
+    )
+    parser.add_argument(
+        "--require-gpu",
+        action="store_true",
+        help="Fail immediately if TensorFlow cannot see a GPU"
+    )
+    parser.add_argument(
+        "--mixed-precision",
+        action="store_true",
+        help="Enable TensorFlow mixed_float16 policy when a GPU is available"
+    )
+    parser.add_argument(
+        "--xla",
+        action="store_true",
+        help="Enable TensorFlow XLA JIT compilation"
+    )
+    parser.add_argument(
         "--guide",
         action="store_true",
         help="Print detailed dataset preparation guide and exit"
@@ -925,6 +1029,12 @@ Examples:
     logger.info(f"  Batch size: {args.batch_size}")
     logger.info(f"  Checkpoint dir: {args.checkpoint_dir}")
     logger.info(f"  Resume: {args.resume}")
+    logger.info(f"  Validation split: {args.test_size}")
+    logger.info(f"  Seed: {args.seed}")
+    logger.info(f"  Max samples: {args.max_samples or 'all'}")
+    logger.info(f"  Require GPU: {args.require_gpu}")
+    logger.info(f"  Mixed precision: {args.mixed_precision}")
+    logger.info(f"  XLA: {args.xla}")
     
     success = train_crnn_model(
         dataset_path=args.dataset_path,
@@ -934,7 +1044,13 @@ Examples:
         log_batch_every=args.log_batch_every,
         checkpoint_dir=args.checkpoint_dir,
         resume=args.resume,
-        warm_start_model=args.warm_start_model
+        warm_start_model=args.warm_start_model,
+        test_size=args.test_size,
+        seed=args.seed,
+        max_samples=args.max_samples,
+        require_gpu=args.require_gpu,
+        mixed_precision=args.mixed_precision,
+        xla=args.xla,
     )
     
     sys.exit(0 if success else 1)

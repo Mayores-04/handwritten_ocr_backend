@@ -35,9 +35,9 @@ IMAGE_CONFIG: dict[str, Any] = {
 }
 
 # ============ Character Classes ============
-# Supported characters by OCR models
-# MUST match the training data structure in data/synthetic/train_test/
-CHAR_CLASSES = list('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+# Supported characters by models/char_model.keras.
+# The saved model has 62 output units: digits + uppercase + lowercase.
+CHAR_CLASSES = list('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz')
 
 # ============ Model Paths ============
 MODEL_PATHS = {

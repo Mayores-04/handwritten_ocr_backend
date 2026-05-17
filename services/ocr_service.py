@@ -48,7 +48,7 @@ class OCRService:
     def _ensure_easyocr_loaded(self):
         # I call this to make sure EasyOCR is loaded before I use it.
         if self._easyocr_initialized:
-            return
+            return self.easyocr_reader
 
         self._easyocr_initialized = True
 
@@ -62,6 +62,7 @@ class OCRService:
             logger.error("EasyOCR not installed: pip install easyocr")
         except Exception as e:
             logger.error("EasyOCR failed to load: %s", e)
+        return self.easyocr_reader
 
     def recognize(self, image: ImageInput, mode: str = 'printed') -> dict[str, Any]:
         # This is the main entry point. I just call the right function based on the mode.
@@ -102,8 +103,7 @@ class OCRService:
         return self.printed_service.recognize(image, self.easyocr_reader)
 
     def _recognize_handwritten(self, image: ImageInput) -> dict[str, Any]:
-        # This is where I run handwritten OCR using my own model (if available) or EasyOCR.
-        self._ensure_easyocr_loaded()
+        # Try Keras first. EasyOCR is loaded lazily only when fallback is needed.
         handwriting_model = self.model_service.get_keras_handwriting_model()
         char_model = self.model_service.get_keras_char_model()
         return self.handwritten_service.recognize(
@@ -111,4 +111,5 @@ class OCRService:
             handwriting_model=handwriting_model,
             char_model=char_model,
             easyocr_reader=self.easyocr_reader,
+            easyocr_loader=self._ensure_easyocr_loaded,
         )

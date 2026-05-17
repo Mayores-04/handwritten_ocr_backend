@@ -64,11 +64,19 @@ class RequestHandler:
         return None, "No image provided (use 'image' file or 'image_base64' in JSON)"
     
     @staticmethod
-    def get_ocr_mode() -> str:
+    def get_ocr_mode(forced_mode: str | None = None) -> str:
         """
         Get OCR mode from request
         Defaults to 'printed'
         """
+        if forced_mode:
+            mode = forced_mode.strip().lower()
+            is_valid, error = validate_mode(mode)
+            if not is_valid:
+                logger.warning("Invalid forced mode '%s': %s", forced_mode, error)
+                return "printed"
+            return mode
+
         # Check form data first
         mode = request.form.get('mode', '').strip().lower()
         
@@ -107,7 +115,7 @@ class RequestHandler:
         return 'lines'  # Default
 
 
-def handle_ocr_request(ocr_service: Any) -> dict[str, Any]:
+def handle_ocr_request(ocr_service: Any, forced_mode: str | None = None) -> dict[str, Any]:
     """
     Handle OCR request
     
@@ -131,7 +139,7 @@ def handle_ocr_request(ocr_service: Any) -> dict[str, Any]:
         }
     
     # Get mode and format
-    mode = RequestHandler.get_ocr_mode()
+    mode = RequestHandler.get_ocr_mode(forced_mode=forced_mode)
     output_format = RequestHandler.get_output_format()
     logger.info(f"OCR request: mode={mode}, format={output_format}, image_size={image.size}")
     
