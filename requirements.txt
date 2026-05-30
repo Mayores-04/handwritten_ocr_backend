@@ -4,8 +4,10 @@ flask-cors>=4.0.0
 
 # Image Processing
 pillow>=10.4.0
-opencv-python>=4.9.0.80
-numpy<2.0.0
+numpy>=1.26.4,<2.0.0; python_version < "3.13"
+numpy>=2.1.0,<3.0.0; python_version >= "3.13"
+opencv-python==4.11.0.86; python_version < "3.13"
+opencv-python==4.13.0.92; python_version >= "3.13"
 
 # Deep Learning - Keras/TensorFlow for OCR (primary engine)
 tensorflow>=2.16.0

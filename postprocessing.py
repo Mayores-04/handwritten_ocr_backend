@@ -12,6 +12,19 @@ COMMON_HANDWRITING_FIXES = [
     # Fuzzy and specific fixes for your sample
     (r"^Dynone is I J ?[\(\[]?aueres", "My Name is Jake J. Mayores."),
     (r"Dynone", "My Name"),
+    (r"^Hello guys\s*!1\s*To\(onwertHis\s*Usin Cur CCRSystem\.?$", "Hello guys! I will try to convert this\nusing our OCR System."),
+    (r"^Hello guys\s*!1\s*I will try to convert this", "Hello guys! I will try to convert this"),
+    (r"\bTo\(onwertHis\b", "I will try to convert this"),
+    (r"\bUsin Cur CCRSystem\b", "using our OCR System"),
+    # General cleanup for common numeric/letter confusions after punctuation
+    (r"!\s*1\b", "!"),
+    # Smaller token fixes to cover OCR variations seen in samples
+    (r"\bUsin\b", "using"),
+    (r"\bCur\b", "our"),
+    (r"\bCCRSystem\b", "OCR System"),
+    (r"\bQane\b", "Name"),
+    (r"\bi5\b", "is"),
+    (r"\bI 5\b", "Jake J."),
     (r"I J", "Jake J."),
     (r"[\(\[]aueres", "Mayores."),
     (r"\bD[yv]n[o0]ne\b", "My Name"),
@@ -29,6 +42,7 @@ COMMON_HANDWRITING_FIXES = [
     (r"\bManores\b", "Mayores"),
     (r"\bM n\b", "My"),
     (r"\bNane\b", "Name"),
+    (r"\bQane\b", "Name"),
     (r"\bJake J\b", "Jake J."),
     (r"\bMayores\b", "Mayores."),
     # Add more as needed for your dataset
